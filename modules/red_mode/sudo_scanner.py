@@ -1,0 +1,151 @@
+"""
+PrivWatch 3.0 - Sudo Configuration Scanner (Red Team Mode)
+Audits sudoers rules, NOPASSWD entries, wildcard permissions, and sudoers file integrity.
+"""
+
+import os
+from pathlib import Path
+import re
+from typing import List, Optional, Any
+
+from core.scanner import BaseScanner, Finding
+from core.models import Severity
+from utils.gtfobins import GTFOBins
+from utils.file_utils import get_permission_string, get_file_stat_metadata
+from config.settings import VECTOR_SUDO, DANGEROUS_SUDO
+
+
+class SudoScanner(BaseScanner):
+    """Audits sudoers configuration and permissions for privilege escalation vectors"""
+
+    def __init__(self, config: Optional[Any] = None):
+        super().__init__(VECTOR_SUDO, config)
+
+    def scan(self) -> List[Finding]:
+        """Execute sudo configuration assessment"""
+        # 1. Audit sudoers file permissions
+        self._check_sudoers_file_security("/etc/sudoers")
+        sudoers_d = "/etc/sudoers.d"
+        if os.path.exists(sudoers_d) and os.path.isdir(sudoers_d):
+            try:
+                for entry in os.scandir(sudoers_d):
+                    if entry.is_file():
+                        self._check_sudoers_file_security(entry.path)
+            except PermissionError:
+                pass
+
+        # 2. Check sudo privileges for current user non-interactively
+        # -n prevents prompting for password
+        output = self.run_command("sudo -n -l 2>/dev/null", timeout=15)
+        if output and ("may run the following" in output.lower() or "user" in output.lower()):
+            self._analyze_sudo_l_output(output)
+
+        # 3. If readable, analyze /etc/sudoers directly
+        if os.access("/etc/sudoers", os.R_OK):
+            self._parse_sudoers_file("/etc/sudoers")
+
+        return self.findings
+
+    def _check_sudoers_file_security(self, file_path: str):
+        """Verify that sudoers files are strictly owned by root and not writable by non-root"""
+        if not os.path.exists(file_path):
+            return
+
+        meta = get_file_stat_metadata(file_path)
+        uid = meta.get('uid')
+
+        # Sudoers must be owned by UID 0
+        if uid is not None and uid != 0:
+            self.add_finding(
+                severity=Severity.CRITICAL.value,
+                title=f"Sudoers File Not Owned by Root: {file_path}",
+                description=f"The file {file_path} is owned by UID {uid} instead of root (UID 0).",
+                affected_resource=file_path,
+                evidence=meta,
+                detection_method="file_ownership_audit",
+                risk_explanation="The owner can modify sudoers rules to grant themselves unrestricted root execution.",
+                remediation=f"Restore root ownership: chown root:root {file_path} && chmod 440 {file_path}",
+                confidence=1.0
+            )
+
+        # Sudoers must not be writable by non-root
+        if os.access(file_path, os.W_OK) and uid == 0 and os.geteuid() != 0 if hasattr(os, 'geteuid') else False:
+            self.add_finding(
+                severity=Severity.CRITICAL.value,
+                title=f"Sudoers File Writable by Current User: {file_path}",
+                description=f"The file {file_path} has write permissions for non-root users.",
+                affected_resource=file_path,
+                evidence=meta,
+                detection_method="file_permission_audit",
+                risk_explanation="Direct privilege escalation. Any local user with write access can add arbitrary NOPASSWD: ALL entries.",
+                remediation=f"Harden permissions: chmod 440 {file_path}",
+                confidence=1.0
+            )
+
+    def _analyze_sudo_l_output(self, sudo_output: str):
+        """Analyze output of sudo -l for dangerous rules"""
+        lines = [line.strip() for line in sudo_output.splitlines() if line.strip()]
+
+        for line in lines:
+            if not ("(" in line and ")" in line):
+                continue
+
+            # Check NOPASSWD with ALL commands
+            if "NOPASSWD" in line and ("ALL" in line.split(")")[-1]):
+                self.add_finding(
+                    severity=Severity.CRITICAL.value,
+                    title="Sudo NOPASSWD Unrestricted Command Execution",
+                    description=f"The current user can execute all commands as root without a password: {line}",
+                    affected_resource="sudoers",
+                    evidence={'rule': line},
+                    detection_method="sudo_l_rule_inspection",
+                    risk_explanation="Immediate root privilege escalation via arbitrary sudo command execution without authentication.",
+                    remediation="Remove NOPASSWD or restrict execution to specific hardened, non-interactive utilities.",
+                    confidence=1.0
+                )
+            elif "NOPASSWD" in line:
+                # Check specific dangerous commands
+                for dangerous_cmd in DANGEROUS_SUDO:
+                    if re.search(r'\b' + re.escape(dangerous_cmd) + r'\b', line, re.IGNORECASE):
+                        gtfo = GTFOBins.lookup(dangerous_cmd)
+                        desc = gtfo.get('sudo', 'Command provides shell escaping or root execution capabilities.') if gtfo else 'Potentially dangerous command.'
+                        self.add_finding(
+                            severity=Severity.HIGH.value,
+                            title=f"Dangerous NOPASSWD Sudo Binary: {dangerous_cmd}",
+                            description=f"Rule grants NOPASSWD execution of {dangerous_cmd}: {line}",
+                            affected_resource=dangerous_cmd,
+                            evidence={'rule': line, 'command': dangerous_cmd},
+                            detection_method="sudo_l_rule_inspection",
+                            risk_explanation=desc,
+                            remediation=GTFOBins.get_defense_recommendation(dangerous_cmd),
+                            confidence=0.95
+                        )
+
+    def _parse_sudoers_file(self, path: str):
+        """Parse contents of readable sudoers file"""
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception:
+            return
+
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            # Check for NOPASSWD
+            if "NOPASSWD:" in line:
+                cmd_part = line.split("NOPASSWD:")[-1].strip()
+                if cmd_part == "ALL" or "/bin/sh" in cmd_part or "/bin/bash" in cmd_part:
+                    self.add_finding(
+                        severity=Severity.HIGH.value,
+                        title=f"Sudoers Rule with NOPASSWD: {line[:50]}",
+                        description=f"Detected rule allowing passwordless command execution in {path}",
+                        affected_resource=path,
+                        evidence={'file': path, 'line': line},
+                        detection_method="sudoers_file_static_parse",
+                        risk_explanation="Users matching this entry can execute elevated commands without password verification.",
+                        remediation="Enforce password authentication or restrict commands using visudo.",
+                        confidence=0.90
+                    )

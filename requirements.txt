@@ -1,0 +1,15 @@
+# PrivWatch 3.0 Platform Dependencies
+# Core standard library is used for assessment and forensics.
+# Web Operations Dashboard & REST API
+fastapi>=0.100.0
+uvicorn>=0.20.0
+pydantic>=2.0.0
+
+# Enterprise PDF Report Generation
+reportlab>=3.6.0
+
+# Process Telemetry & System Metrics
+psutil>=5.9.0
+
+# Automated Testing
+pytest>=7.0.0
