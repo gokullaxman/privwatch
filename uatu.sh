@@ -39,3 +39,4 @@ fi
 
 # Execute UATU CLI
 exec python3 "${SCRIPT_DIR}/uatu_cli.py" "$@"
+

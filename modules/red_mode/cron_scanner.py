@@ -141,8 +141,12 @@ class CronScanner(BaseScanner):
             if not line or line.startswith("#"):
                 continue
 
-            # Look for executable and script paths
-            paths = re.findall(r'((?:[a-zA-Z]:)?[/\\][a-zA-Z0-9_\.\-~]+(?:[/\\][a-zA-Z0-9_\.\-~]+)+)', line)
+            # Look for absolute file/script paths in cron command (support both Linux /path and test environment drive paths)
+            try:
+                paths = re.findall(r'((?:[a-zA-Z]:)?/(?:[a-zA-Z0-9_.~-]+/)+[a-zA-Z0-9_.~-]+)', line)
+            except Exception:
+                paths = []
+
             for p in paths:
                 if os.path.exists(p) and os.path.isfile(p):
                     try:
@@ -228,7 +232,19 @@ class CronScanner(BaseScanner):
             line = line.strip()
             if line.startswith("ExecStart="):
                 exec_cmd = line.split("ExecStart=", 1)[1].strip()
-                tokens = shlex.split(exec_cmd) if exec_cmd else []
+                tokens = []
+                try:
+                    tokens = shlex.split(exec_cmd) if exec_cmd else []
+                except ValueError:
+                    # Fix "No escaped character": handle continuation lines or trailing backslashes
+                    clean_cmd = exec_cmd.replace('\\', ' ')
+                    try:
+                        tokens = shlex.split(clean_cmd)
+                    except Exception:
+                        tokens = clean_cmd.split()
+                except Exception:
+                    tokens = exec_cmd.split()
+
                 if tokens:
                     script_path = tokens[0].lstrip("-@+!:")
                     if os.path.exists(script_path) and os.path.isfile(script_path):

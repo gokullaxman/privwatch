@@ -16,3 +16,5 @@ reports/*.json
 reports/*.pdf
 reports/*.txt
 reports/*.csv
+*token*
+config/uatu_token

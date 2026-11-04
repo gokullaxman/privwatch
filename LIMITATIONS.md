@@ -55,3 +55,4 @@ This document explicitly defines the operational boundaries, threat coverage, an
 2. **Safe Disruption & Containment**:
    - All automated remediation actions are strictly reversible, typed `chmod` and `chown` operations targeting validated, canonical filesystem paths.
    - Destructive operations (killing arbitrary PIDs, network blackholing, unmounting filesystems) are strictly disabled in this slice to prevent denial of service.
+

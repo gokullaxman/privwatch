@@ -22,3 +22,4 @@
 -w /etc/shadow -p wa -k uatu_shadow
 
 # End of UATU audit rules
+

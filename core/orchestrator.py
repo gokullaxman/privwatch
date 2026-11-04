@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import threading
 import time
+import traceback
 from typing import Dict, List, Optional, Any, Callable
 
 from core.config import PrivWatchConfig
@@ -77,6 +78,7 @@ class PrivWatchOrchestrator:
                     Logger.success(f"  -> {name}: No vulnerabilities identified")
             except Exception as e:
                 Logger.error(f"  -> Scanner error on {name}: {str(e)}")
+                Logger.debug(f"Scanner error traceback on {name}:\n{traceback.format_exc()}")
 
         # Filter against active suppression rules
         filtered = [f for f in all_findings if not self.storage.is_suppressed(f.vector, f.title)]
@@ -149,6 +151,7 @@ class PrivWatchOrchestrator:
                     Logger.success(f"  -> {name}: No anomalies detected")
             except Exception as e:
                 Logger.error(f"  -> Detector error on {name}: {str(e)}")
+                Logger.debug(f"Detector error traceback on {name}:\n{traceback.format_exc()}")
 
         # PrivWatch 3.1: Non-blocking Advisory ML Evaluation
         if collected_events:
@@ -190,7 +193,7 @@ class PrivWatchOrchestrator:
 
     def get_posture(self) -> SystemPosture:
         """Compute system posture strictly from stored or active findings"""
-        findings = self.findings if self.findings else self.storage.get_findings()
+        findings = self.findings if self.findings is not None else self.storage.get_findings()
         return SystemPosture.calculate(findings)
 
     def get_telemetry_health(self) -> TelemetryHealth:

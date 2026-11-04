@@ -77,6 +77,7 @@ def cmd_watch(args, orchestrator: PrivWatchOrchestrator):
     print("  Press Ctrl+C to stop.")
     print("=" * 72)
 
+    is_verbose = getattr(args, "verbose", False)
     storage = orchestrator.storage
     bus = orchestrator.event_bus
     tel_engine = TelemetryEngine(storage=storage, event_bus=bus)
@@ -86,7 +87,7 @@ def cmd_watch(args, orchestrator: PrivWatchOrchestrator):
         while True:
             # Poll live logs
             events = tel_engine.poll_once()
-            if events:
+            if is_verbose and events:
                 for ev in events:
                     print(f"[{format_iso(ev.timestamp)}] TELEMETRY: [{ev.severity}] {ev.event_type} user={ev.user} exe={ev.exe or ev.command}")
 
@@ -108,7 +109,7 @@ def cmd_watch(args, orchestrator: PrivWatchOrchestrator):
 
 def cmd_serve(args, orchestrator: PrivWatchOrchestrator):
     import uvicorn
-    from web.app import app, API_KEY
+    from web.app import app
 
     host = "127.0.0.1"
     port = getattr(args, "port", 8443) or 8443
@@ -117,7 +118,7 @@ def cmd_serve(args, orchestrator: PrivWatchOrchestrator):
     print("  UATU LINUX EDITION — SECURITY OPERATIONS DASHBOARD")
     print("=" * 72)
     print(f"Dashboard URL: http://{host}:{port}/dashboard")
-    print(f"Local API Key: {API_KEY}")
+    print("Auth Token:    Loaded from config/uatu_token (mode 0600)")
     print("Listening on 127.0.0.1 (localhost only). Press Ctrl+C to terminate.\n")
 
     uvicorn.run(app, host=host, port=port, log_level="warning")
@@ -235,7 +236,8 @@ def main():
     subparsers.add_parser("scan", help="Run full privilege escalation scan and build attack paths")
 
     # watch
-    subparsers.add_parser("watch", help="Live telemetry collection and real-time detection")
+    watch_parser = subparsers.add_parser("watch", help="Live telemetry collection and real-time detection")
+    watch_parser.add_argument("--verbose", "-v", action="store_true", help="Print raw telemetry stream in addition to detections")
 
     # serve
     serve_parser = subparsers.add_parser("serve", help="Start operations dashboard on 127.0.0.1:8443")
@@ -276,3 +278,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

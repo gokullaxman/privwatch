@@ -22,6 +22,9 @@ DEFAULT_SUID_ALLOWLIST = [
     '/usr/bin/umount',
     '/usr/bin/su',
     '/usr/bin/pkexec',
+    '/usr/bin/ping',
+    '/usr/bin/fusermount',
+    '/usr/bin/fusermount3',
     '/usr/lib/openssh/ssh-keysign',
     '/usr/lib/dbus-1.0/dbus-daemon-launch-helper',
     '/usr/libexec/polkit-agent-helper-1'
@@ -39,15 +42,43 @@ STANDARD_BIN_DIRS = [
 ]
 
 
+def get_default_db_path() -> str:
+    """
+    Get the default SQLite database path for UATU.
+    Defaults to /var/lib/uatu/uatu.db (0700 dir, service-owned, 0600 file).
+    If unprivileged and /var/lib/uatu is not accessible, falls back to
+    ~/.local/share/uatu/uatu.db to eliminate root/user permission mixing.
+    Can be overridden via UATU_DB_PATH environment variable.
+    """
+    env_override = os.environ.get("UATU_DB_PATH") or os.environ.get("PRIVWATCH_DB_PATH")
+    if env_override:
+        return env_override
+
+    if os.name == "posix":
+        var_lib_dir = "/var/lib/uatu"
+        try:
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                return "/var/lib/uatu/uatu.db"
+            if os.path.exists(var_lib_dir) and os.access(var_lib_dir, os.W_OK):
+                return "/var/lib/uatu/uatu.db"
+        except (AttributeError, OSError):
+            pass
+
+        user_home = os.path.expanduser("~")
+        return os.path.join(user_home, ".local", "share", "uatu", "uatu.db")
+
+    return "./uatu.db"
+
+
 @dataclass
 class PrivWatchConfig:
     """Master configuration for PrivWatch 3.0 Platform"""
     # General
-    app_name: str = "PrivWatch"
+    app_name: str = "UATU"
     version: str = "3.0.0"
     mode: str = "red"  # 'red', 'blue', 'timeline', 'dashboard'
     output_dir: str = "./reports"
-    db_path: str = "./privwatch.db"
+    db_path: str = field(default_factory=get_default_db_path)
     log_level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
     read_only_mode: bool = True
 
@@ -90,8 +121,8 @@ class PrivWatchConfig:
             self.log_level = os.getenv("PRIVWATCH_LOG_LEVEL", "INFO").upper()
         if os.getenv("PRIVWATCH_OUTPUT_DIR"):
             self.output_dir = os.getenv("PRIVWATCH_OUTPUT_DIR")
-        if os.getenv("PRIVWATCH_DB_PATH"):
-            self.db_path = os.getenv("PRIVWATCH_DB_PATH")
+        if os.getenv("UATU_DB_PATH") or os.getenv("PRIVWATCH_DB_PATH"):
+            self.db_path = os.getenv("UATU_DB_PATH") or os.getenv("PRIVWATCH_DB_PATH")
         if os.getenv("PRIVWATCH_HOST"):
             self.dashboard_host = os.getenv("PRIVWATCH_HOST")
         if os.getenv("PRIVWATCH_PORT"):

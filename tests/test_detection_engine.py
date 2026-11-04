@@ -108,3 +108,58 @@ def test_watched_file_modification_detection():
     assert "Tampering with Critical Authentication Database" in incidents[0].title
     assert incidents[0].severity == Severity.CRITICAL.value
     assert incidents[0].attribution["target_file"] == "/etc/shadow"
+
+
+def test_detection_dedupe_20_records_one_pid_one_incident():
+    """Verify that 20 records for one PID (e.g. audit records for same syscall) deduplicate to 1 incident."""
+    base_time = datetime.now(timezone.utc)
+    engine = DetectionEngine()
+
+    # 20 distinct event records for a single PID and serial
+    events = []
+    for i in range(20):
+        events.append(UatuEvent(
+            event_id=f"evt_pid444_{i}",
+            timestamp=base_time + timedelta(milliseconds=i * 10),
+            event_type="SUID_EXECUTION",
+            user="attacker",
+            uid=1000,
+            euid=0,
+            pid=4444,
+            exe="/tmp/malicious_suid",
+            audit_event_id="1730657730.123:999",
+            evidence={"serial": "999", "sub_record": i}
+        ))
+
+    incidents = engine.correlate(events)
+    # Exactly one incident must be produced despite 20 records
+    assert len(incidents) == 1
+    inc = incidents[0]
+    assert inc.attribution["pid"] == 4444
+    assert inc.attribution["audit_serial"] == "999"
+    # All 20 event references are preserved
+    assert len(inc.event_ids) == 20
+
+
+def test_expected_suid_allowlist_no_incident():
+    """Verify that expected system SUID binaries (sudo, su, passwd, mount, ping, fusermount) are allowlisted."""
+    engine = DetectionEngine()
+    expected_binaries = ["/usr/bin/sudo", "/bin/su", "/usr/bin/passwd", "/bin/mount", "/bin/ping", "/usr/bin/fusermount"]
+
+    events = [
+        UatuEvent(
+            event_id=f"evt_allowlisted_{i}",
+            event_type="SUID_EXECUTION",
+            user="user1",
+            uid=1000,
+            euid=0,
+            pid=1000 + i,
+            exe=bin_path
+        )
+        for i, bin_path in enumerate(expected_binaries)
+    ]
+
+    incidents = engine.correlate(events)
+    assert len(incidents) == 0
+
+

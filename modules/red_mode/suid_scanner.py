@@ -76,7 +76,15 @@ class SuidScanner(BaseScanner):
         owner_uid = st.st_uid
 
         gtfo = GTFOBins.lookup(binary_name)
-        is_allowed = binary_path in self.allowlist or os.path.realpath(binary_path) in self.allowlist
+        is_allowed = (
+            binary_path in self.allowlist or
+            os.path.realpath(binary_path) in self.allowlist or
+            binary_name in {
+                "passwd", "sudo", "newgrp", "chfn", "chsh", "gpasswd",
+                "mount", "umount", "su", "pkexec", "ping", "fusermount", "fusermount3"
+            } or
+            binary_name.startswith("kismet_cap_")
+        )
 
         # Case 1: Binary is world-writable or insecurely writable by unauthorized users
         if is_insecurely_writable(binary_path):

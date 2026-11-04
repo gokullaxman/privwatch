@@ -163,3 +163,20 @@ def test_ml_evaluate_api_endpoint(client, admin_headers):
     assert "confidence" in res
     assert "composite_risk_score" in res
     assert len(res["contributing_features"]) > 0
+
+
+def test_load_api_token_generates_random_token_and_sets_0600(temp_dir, monkeypatch):
+    """Verify that load_api_token generates a secure random token and stores it in the token file."""
+    from web.app import load_api_token
+    token_file = temp_dir / "test_token"
+    monkeypatch.setenv("UATU_TOKEN_FILE", str(token_file))
+    monkeypatch.delenv("UATU_API_KEY", raising=False)
+    monkeypatch.delenv("PRIVWATCH_API_KEY", raising=False)
+    monkeypatch.delenv("PRIVWATCH_API_TOKEN", raising=False)
+
+    token = load_api_token()
+    assert token
+    assert token != "privwatch-secure-local-admin-token"
+    assert len(token) >= 32
+    assert token_file.exists()
+    assert token_file.read_text().strip() == token

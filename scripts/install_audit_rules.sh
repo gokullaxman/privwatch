@@ -50,3 +50,4 @@ fi
 echo "[+] Audit rules successfully deployed and loaded."
 echo "[*] Current auditd status:"
 auditctl -s
+

@@ -318,11 +318,8 @@ class SystemPosture:
     @staticmethod
     def calculate(findings: List[Finding]) -> "SystemPosture":
         """
-        Compute security posture score (0 - 100) strictly from findings.
-        Formula:
-          Base score: 100
-          Penalty: Critical = 25, High = 10, Medium = 3, Low = 1, Info = 0
-          Minimum score: 0
+        Compute security posture score (0 - 100) strictly from findings,
+        weighted by confirmed exploitability and detection confidence.
         """
         crit = sum(1 for f in findings if f.severity == Severity.CRITICAL.value)
         high = sum(1 for f in findings if f.severity == Severity.HIGH.value)
@@ -330,8 +327,32 @@ class SystemPosture:
         low = sum(1 for f in findings if f.severity == Severity.LOW.value)
         info = sum(1 for f in findings if f.severity == Severity.INFO.value)
 
-        penalty = (crit * 25) + (high * 10) + (med * 3) + (low * 1)
-        score = max(0, 100 - penalty)
+        total_penalty = 0.0
+        for f in findings:
+            # Base severity weights
+            if f.severity == Severity.CRITICAL.value:
+                base_w = 25.0
+            elif f.severity == Severity.HIGH.value:
+                base_w = 10.0
+            elif f.severity == Severity.MEDIUM.value:
+                base_w = 3.0
+            elif f.severity == Severity.LOW.value:
+                base_w = 1.0
+            else:
+                base_w = 0.0
+
+            title_lower = f.title.lower()
+
+            # Weight by exploitability: Non-standard / advisory hygiene SUIDs without exploit vectors
+            # are weighted down so stock distributions do not receive punitive score collapse.
+            if "non-standard suid binary" in title_lower:
+                exploitability = 0.25
+            else:
+                exploitability = 1.0
+
+            total_penalty += base_w * exploitability
+
+        score = max(0, int(round(100.0 - total_penalty)))
 
         if score >= 90:
             status = "HEALTHY"

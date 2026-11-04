@@ -34,6 +34,9 @@ DEFAULT_SUID_ALLOWLIST = [
     '/usr/bin/umount',
     '/usr/bin/su',
     '/usr/bin/pkexec',
+    '/usr/bin/ping',
+    '/usr/bin/fusermount',
+    '/usr/bin/fusermount3',
     '/usr/lib/openssh/ssh-keysign',
     '/usr/lib/dbus-1.0/dbus-daemon-launch-helper',
     '/usr/libexec/polkit-agent-helper-1'
@@ -50,13 +53,35 @@ STANDARD_BIN_DIRS = [
 ]
 
 
+def get_default_db_path() -> str:
+    """Get the default SQLite database path for UATU."""
+    env_override = os.environ.get("UATU_DB_PATH") or os.environ.get("PRIVWATCH_DB_PATH")
+    if env_override:
+        return env_override
+
+    if os.name == "posix":
+        var_lib_dir = "/var/lib/uatu"
+        try:
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                return "/var/lib/uatu/uatu.db"
+            if os.path.exists(var_lib_dir) and os.access(var_lib_dir, os.W_OK):
+                return "/var/lib/uatu/uatu.db"
+        except (AttributeError, OSError):
+            pass
+
+        user_home = os.path.expanduser("~")
+        return os.path.join(user_home, ".local", "share", "uatu", "uatu.db")
+
+    return "./uatu.db"
+
+
 @dataclass
 class GeneralConfig:
     app_name: str = "UATU"
     version: str = "3.2.0"
     mode: str = "monitor"  # 'monitor', 'audit', 'timeline', 'dashboard'
     output_dir: str = "./reports"
-    db_path: str = "./privwatch.db"
+    db_path: str = field(default_factory=get_default_db_path)
     log_level: str = "INFO"
     read_only_mode: bool = True
 

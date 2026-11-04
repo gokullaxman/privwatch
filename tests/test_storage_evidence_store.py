@@ -187,3 +187,24 @@ def test_storage_attack_path_and_policy_persistence(temp_storage):
         assert conn.execute("SELECT count(*) FROM policies").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM containment_ops").fetchone()[0] == 1
 
+
+def test_get_default_db_path_and_isolation(monkeypatch):
+    """Verify default DB path resolution and isolation between root and unprivileged users."""
+    from core.config import get_default_db_path
+
+    # 1. Environment variable override
+    monkeypatch.setenv("UATU_DB_PATH", "/tmp/custom_test_uatu.db")
+    assert get_default_db_path() == "/tmp/custom_test_uatu.db"
+    monkeypatch.delenv("UATU_DB_PATH", raising=False)
+
+    # 2. Simulated root execution on POSIX
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    assert get_default_db_path() == "/var/lib/uatu/uatu.db"
+
+    # 3. Simulated non-root execution when /var/lib/uatu does not exist
+    monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
+    user_path = get_default_db_path()
+    assert "/var/lib/uatu" not in user_path or ".local/share/uatu" in user_path
+
+

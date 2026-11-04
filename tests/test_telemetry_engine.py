@@ -56,6 +56,49 @@ def test_audit_log_reader_parses_syscalls_and_watches():
     assert events[3].severity == EventSeverity.CRITICAL
 
 
+def test_audit_multi_record_merging_by_serial():
+    """Verify that multiple audit records sharing msg=audit(ts:serial) merge into one unified UatuEvent."""
+    raw_lines = [
+        'type=SYSCALL msg=audit(1730657750.100:999): arch=c000003e syscall=59 success=yes exit=0 items=2 ppid=1000 pid=4500 auid=1000 uid=1000 gid=1000 euid=0 suid=0 fsuid=0 comm="pkexec" exe="/usr/bin/pkexec" key="uatu_exec"',
+        'type=EXECVE msg=audit(1730657750.100:999): argc=2 a0="pkexec" a1="/bin/sh"',
+        'type=CWD msg=audit(1730657750.100:999): cwd="/tmp"',
+        'type=PATH msg=audit(1730657750.100:999): item=0 name="/usr/bin/pkexec" inode=123 dev=08:01 mode=0104755 ouid=0 ogid=0',
+        'type=PROCTITLE msg=audit(1730657750.100:999): proctitle=706B65786563002F62696E2F7368'
+    ]
+
+    reader = AuditLogReader()
+    events = reader.parse_audit_lines(raw_lines)
+
+    # 5 records must merge into exactly 1 event
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.audit_event_id == "1730657750.100:999"
+    assert ev.pid == 4500
+    assert ev.uid == 1000
+    assert ev.euid == 0
+    assert ev.command == "pkexec /bin/sh"
+    assert ev.event_type == "SUID_EXECUTION"
+    assert ev.evidence["serial"] == "999"
+    assert "EXECVE" in ev.evidence["record_types"]
+    assert "CWD" in ev.evidence["record_types"]
+
+
+def test_audit_standalone_cwd_path_proctitle_dropped():
+    """Verify that standalone CWD, PATH, and PROCTITLE records without security watches are dropped."""
+    raw_lines = [
+        'type=CWD msg=audit(1730657760.200:1001): cwd="/home/kali"',
+        'type=PATH msg=audit(1730657760.200:1001): item=0 name="/bin/ls" inode=456 dev=08:01',
+        'type=PROCTITLE msg=audit(1730657760.200:1001): proctitle=6C73'
+    ]
+
+    reader = AuditLogReader()
+    events = reader.parse_audit_lines(raw_lines)
+
+    # Standalone unmonitored CWD/PATH/PROCTITLE records must be dropped
+    assert len(events) == 0
+
+
+
 def test_audit_missing_reports_health_unavailable():
     """Verify missing auditd subsystem sets auditd_exec_monitoring to UNAVAILABLE."""
     health_reg = HealthRegistry()
@@ -137,3 +180,4 @@ def test_telemetry_engine_event_bus_and_storage_pipeline(temp_dir):
         assert stored[0].euid == 0
     finally:
         event_bus.stop()
+

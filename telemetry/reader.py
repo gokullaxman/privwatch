@@ -98,19 +98,167 @@ class AuditLogReader:
         return self.parse_audit_lines(text.splitlines())
 
     def parse_audit_lines(self, lines: List[str]) -> List[UatuEvent]:
-        """Parse raw or interpreted audit lines into structured UatuEvent objects."""
-        events: List[UatuEvent] = []
+        """
+        Parse raw or interpreted audit lines into structured UatuEvent objects.
+        Merges multi-record audit events by msg=audit(ts:serial) into a single event.
+        Drops standalone CWD/PATH/PROCTITLE records unless they match a security watch.
+        """
+        from collections import defaultdict
+        grouped_records: Dict[str, List[str]] = defaultdict(list)
 
         for line in lines:
             line = line.strip()
-            if not line or not ("type=" in line and "msg=audit" in line):
+            if not line or "msg=audit" not in line:
                 continue
 
-            evt = self._parse_single_line(line)
+            audit_m = re.search(r'msg=audit\(([^)]+)\)', line)
+            if not audit_m:
+                continue
+            ts_serial = audit_m.group(1).strip()
+            grouped_records[ts_serial].append(line)
+
+        events: List[UatuEvent] = []
+        for ts_serial, group_lines in grouped_records.items():
+            evt = self._merge_audit_group(ts_serial, group_lines)
             if evt:
                 events.append(evt)
 
         return events
+
+    def _merge_audit_group(self, ts_serial: str, group_lines: List[str]) -> Optional[UatuEvent]:
+        records = []
+        for line in group_lines:
+            type_m = re.search(r'type=([A-Z0-9_]+)', line)
+            rec_type = type_m.group(1) if type_m else "UNKNOWN"
+            fields: Dict[str, str] = {}
+            for match in re.finditer(r'([a-zA-Z0-9_\.\-]+)=("[^"]*"|\'[^\']*\'|[^\s]+)', line):
+                k = match.group(1)
+                v = match.group(2).strip('"\'')
+                fields[k] = v
+            records.append((rec_type, fields, line))
+
+        record_types = {r[0] for r in records}
+
+        # Check if standalone CWD/PATH/PROCTITLE
+        if record_types.issubset({"CWD", "PATH", "PROCTITLE"}):
+            has_security_key = any(
+                r[1].get("key", "").strip('"\'') in ("uatu_sudoers", "uatu_passwd", "uatu_shadow") or
+                any(w in r[1].get("name", "") for w in ("sudoers", "passwd", "shadow"))
+                for r in records
+            )
+            if not has_security_key:
+                # Drop standalone CWD/PATH/PROCTITLE
+                return None
+
+        # Merge fields (primary records take precedence)
+        merged_fields: Dict[str, str] = {}
+        for r_type, f_dict, _ in records:
+            if r_type in ("CWD", "PATH", "PROCTITLE"):
+                merged_fields.update(f_dict)
+        for r_type, f_dict, _ in records:
+            if r_type not in ("CWD", "PATH", "PROCTITLE"):
+                merged_fields.update(f_dict)
+
+        ts = self._extract_timestamp(group_lines[0])
+        serial = ts_serial.split(":")[-1] if ":" in ts_serial else None
+
+        uid = int(merged_fields["uid"]) if merged_fields.get("uid", "").isdigit() else None
+        euid = int(merged_fields["euid"]) if merged_fields.get("euid", "").isdigit() else None
+        suid = int(merged_fields["suid"]) if merged_fields.get("suid", "").isdigit() else None
+        gid = int(merged_fields["gid"]) if merged_fields.get("gid", "").isdigit() else None
+        egid = int(merged_fields["egid"]) if merged_fields.get("egid", "").isdigit() else None
+        pid = int(merged_fields["pid"]) if merged_fields.get("pid", "").isdigit() else None
+        ppid = int(merged_fields["ppid"]) if merged_fields.get("ppid", "").isdigit() else None
+        comm = merged_fields.get("comm")
+        exe = merged_fields.get("exe")
+        key = merged_fields.get("key", "").strip('"\'')
+
+        # Reconstruct command from EXECVE argc / a0, a1, ... if present
+        execve_args = []
+        for r_type, f_dict, _ in records:
+            if r_type == "EXECVE":
+                arg_keys = sorted([k for k in f_dict if k.startswith("a") and k[1:].isdigit()], key=lambda k: int(k[1:]))
+                execve_args = [f_dict[k] for k in arg_keys]
+                break
+
+        command = " ".join(execve_args) if execve_args else (comm or exe)
+
+        if not exe:
+            for r_type, f_dict, _ in records:
+                if r_type == "PATH" and f_dict.get("name"):
+                    exe = f_dict["name"]
+                    break
+
+        primary_type = "SYSCALL" if "SYSCALL" in record_types else (next(iter(record_types)) if record_types else "AUDIT")
+        event_type = f"AUDIT_{primary_type}"
+        severity = EventSeverity.INFO
+
+        # 1. Monitored file modifications
+        path_names = [r[1].get("name", "") for r in records if r[0] == "PATH"]
+        if key in ("uatu_sudoers", "uatu_passwd", "uatu_shadow") or any("sudoers" in n or "passwd" in n or "shadow" in n for n in path_names):
+            if "sudoers" in key or any("sudoers" in n for n in path_names):
+                event_type = "WATCHED_FILE_EDIT_SUDOERS"
+                severity = EventSeverity.HIGH
+            elif "passwd" in key or any("passwd" in n for n in path_names):
+                event_type = "WATCHED_FILE_EDIT_PASSWD"
+                severity = EventSeverity.CRITICAL
+            elif "shadow" in key or any("shadow" in n for n in path_names):
+                event_type = "WATCHED_FILE_EDIT_SHADOW"
+                severity = EventSeverity.CRITICAL
+
+        # 2. SUID execution
+        elif euid is not None and uid is not None and euid == 0 and uid != 0:
+            event_type = "SUID_EXECUTION"
+            severity = EventSeverity.HIGH
+
+        # 3. Privilege escalation syscalls
+        elif key == "uatu_priv_esc" or any(t in ("SETUID", "SETREUID", "SETRESUID") for t in record_types):
+            event_type = "PRIVILEGE_TRANSITION_SYSCALL"
+            severity = EventSeverity.HIGH
+
+        # 4. Standard process executions
+        elif any(t in ("EXECVE", "SYSCALL") for t in record_types):
+            event_type = "PROCESS_EXECUTION"
+
+        import hashlib
+        evt_id = f"evt_{hashlib.sha256(ts_serial.encode()).hexdigest()[:16]}"
+        user = merged_fields.get("AUID") or merged_fields.get("auid") or (str(uid) if uid is not None else "unknown")
+        if user in ("4294967295", "-1", "unset"):
+            user = str(uid) if uid is not None else "unknown"
+
+        return UatuEvent(
+            event_id=evt_id,
+            timestamp=ts,
+            host_id="localhost",
+            hostname=self.hostname,
+            source="auditd",
+            source_event_id=ts_serial,
+            collection_method=CollectionMethod.AUDITD_LOG,
+            event_type=event_type,
+            severity=severity,
+            uid=uid,
+            euid=euid,
+            suid=suid,
+            gid=gid,
+            egid=egid,
+            pid=pid,
+            ppid=ppid,
+            audit_event_id=ts_serial,
+            exe=exe or comm,
+            command=command,
+            user=user,
+            evidence={
+                "record_types": list(record_types),
+                "key": key,
+                "serial": serial,
+                "fields": merged_fields,
+                "raw_lines": group_lines
+            },
+            provenance_class=ProvenanceClass.OBSERVED,
+            data_origin=DataOrigin.LIVE_TELEMETRY,
+            confidence=0.98,
+            collection_status=CollectionStatus.SUCCESS
+        )
 
     def _parse_single_line(self, line: str) -> Optional[UatuEvent]:
         # Extract record type
@@ -432,3 +580,4 @@ class TelemetryEngine:
             self.storage.save_events(collected)
 
         return collected
+

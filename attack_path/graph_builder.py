@@ -204,3 +204,4 @@ class AttackPathEngine:
             self.storage.save_attack_path(ap_model)
 
         return paths
+

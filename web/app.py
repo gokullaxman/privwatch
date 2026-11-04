@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import secrets
 import threading
 import time
 from typing import List, Optional, Dict, Any
@@ -55,43 +56,73 @@ app.add_middleware(
 
 
 def load_api_token() -> str:
-    """Read API token from a 0600 file or environment variable."""
-    token_file = os.getenv("UATU_TOKEN_FILE")
-    if not token_file:
-        for candidate in ["./config/uatu_token", "/etc/uatu/token", "./uatu_token"]:
-            if os.path.exists(candidate):
-                token_file = candidate
-                break
-
-    if token_file and os.path.exists(token_file):
-        try:
-            if os.name == 'posix':
-                st = os.stat(token_file)
-                mode = st.st_mode & 0o777
-                if mode & 0o077 != 0:
-                    os.chmod(token_file, 0o600)
-            with open(token_file, "r", encoding="utf-8") as f:
-                t = f.read().strip()
-                if t:
-                    return t
-        except Exception:
-            pass
-
-    env_token = os.getenv("UATU_API_KEY") or os.getenv("PRIVWATCH_API_KEY")
+    """Read API token from a 0600 file or environment variable, or generate a cryptographically random token."""
+    env_token = os.getenv("UATU_API_KEY") or os.getenv("PRIVWATCH_API_KEY") or os.getenv("PRIVWATCH_API_TOKEN")
     if env_token:
         return env_token
 
-    default_token = "privwatch-secure-local-admin-token"
-    token_path = Path("./config/uatu_token")
+    token_file = os.getenv("UATU_TOKEN_FILE")
+    if token_file:
+        candidates = [token_file]
+    else:
+        candidates = []
+        if os.name == "posix":
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                candidates.extend(["/var/lib/uatu/token", "/etc/uatu/token"])
+            candidates.append(os.path.join(os.path.expanduser("~"), ".local", "share", "uatu", "token"))
+        candidates.extend(["./config/uatu_token", "./uatu_token"])
+
+    # 1. Look for existing valid token (ignore legacy hardcoded placeholder)
+    for candidate in candidates:
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            try:
+                if os.name == "posix":
+                    st = os.stat(candidate)
+                    if (st.st_mode & 0o077) != 0:
+                        os.chmod(candidate, 0o600)
+                with open(candidate, "r", encoding="utf-8") as f:
+                    t = f.read().strip()
+                    if t and t != "privwatch-secure-local-admin-token":
+                        return t
+            except Exception:
+                pass
+
+    # 2. Generate a secure random token
+    new_token = secrets.token_urlsafe(32)
+
+    # Pick writable location
+    chosen_path = None
+    for candidate in candidates:
+        p = Path(candidate)
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if os.access(str(p.parent), os.W_OK):
+                chosen_path = p
+                break
+        except Exception:
+            continue
+
+    if not chosen_path:
+        chosen_path = Path("./config/uatu_token")
+        chosen_path.parent.mkdir(parents=True, exist_ok=True)
+
     try:
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        if not token_path.exists():
-            token_path.write_text(default_token, encoding="utf-8")
-            if os.name == 'posix':
-                os.chmod(token_path, 0o600)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        mode = 0o600
+        fd = os.open(str(chosen_path), flags, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(new_token + "\n")
+        if os.name == "posix":
+            os.chmod(str(chosen_path), 0o600)
     except Exception:
-        pass
-    return default_token
+        try:
+            chosen_path.write_text(new_token + "\n", encoding="utf-8")
+            if os.name == "posix":
+                os.chmod(str(chosen_path), 0o600)
+        except Exception:
+            pass
+
+    return new_token
 
 
 API_KEY = load_api_token()

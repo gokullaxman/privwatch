@@ -37,7 +37,10 @@ class StorageEngine:
 
     GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000"
 
-    def __init__(self, db_path: str = "./privwatch.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        if not db_path:
+            from core.config import get_default_db_path
+            db_path = get_default_db_path()
         self.db_path = str(Path(db_path).resolve())
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)

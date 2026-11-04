@@ -64,6 +64,23 @@ def test_cron_scanner_writable_script_detection(temp_dir):
     assert fnd.severity == Severity.CRITICAL.value
 
 
+def test_cron_scanner_trailing_backslash_no_escaped_character(temp_dir):
+    """Verify that CronScanner does not crash with ValueError: No escaped character on trailing backslash."""
+    scanner = CronScanner()
+
+    script_file = temp_dir / "service_script.sh"
+    script_file.write_text("#!/bin/sh\necho service")
+
+    # Service with trailing backslash (continuation line syntax that triggers 'No escaped character')
+    service_file = temp_dir / "vuln.service"
+    service_file.write_text(f"[Service]\nExecStart={script_file.as_posix()} \\\n")
+
+    # Should not raise ValueError: No escaped character
+    scanner._check_service_file_execstart(str(service_file))
+    assert len(scanner.findings) >= 1
+    assert "Writable Root Systemd Service Script" in scanner.findings[0].title
+
+
 def test_passwd_scanner_rogue_uid0_and_empty_password(temp_dir):
     scanner = PasswdScanner()
 
@@ -166,5 +183,34 @@ def test_scanner_findings_stored_as_static_scan_events(temp_dir):
     assert events[0].data_origin == DataOrigin.STATIC_SCAN
     assert events[0].evidence["owner"] == "0:0"
     assert events[0].evidence["mode"] == "-rwsr-xr-x"
+
+
+def test_path_scanner_evaluates_root_paths_and_group_other_writable_only(monkeypatch, temp_dir):
+    """Verify PathScanner evaluates root/service paths only and requires group/other-writable AND root-reachable."""
+    scanner = PathScanner()
+
+    safe_dir = temp_dir / "safe_bin"
+    safe_dir.mkdir(parents=True, exist_ok=True)
+
+    # Mock POSIX stat so safe_dir has 0755 root:root permissions
+    import stat as stat_mod
+    orig_stat = os.stat
+    def mock_stat(path, *args, **kwargs):
+        res = orig_stat(path, *args, **kwargs)
+        if "safe_bin" in str(path):
+            return os.stat_result((stat_mod.S_IFDIR | 0o755, res.st_ino, res.st_dev, res.st_nlink, 0, 0, res.st_size, res.st_atime, res.st_mtime, res.st_ctime))
+        return res
+    monkeypatch.setattr(os, "stat", mock_stat)
+
+    # Safe directory in root path should NOT trigger a writable finding
+    scanner._audit_path_string(f"{safe_dir.as_posix()}:/usr/bin:/bin", "Root PATH")
+    assert not any("Writable Directory in PATH" in f.title for f in scanner.findings)
+
+    # When running as non-root (euid != 0), scanner.scan() should not audit user environment PATH
+    monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
+    monkeypatch.setenv("PATH", f"{safe_dir.as_posix()}:/some/user/bin")
+    findings = scanner.scan()
+    assert not any("Root PATH Environment" in f.evidence.get("source", "") for f in findings)
+
 
 

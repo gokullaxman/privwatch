@@ -88,3 +88,4 @@ def test_attack_path_never_claims_exploited():
     assert len(paths) == 1
     assert paths[0].level == "CONFIGURATION_ONLY"
     assert "exploited" not in paths[0].level.lower()
+
