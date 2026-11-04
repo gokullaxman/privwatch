@@ -1,18 +1,18 @@
 """
 PrivWatch 3.0 - Base Scanner Architecture
 Abstract base class for all Red Team enumeration and security assessment modules.
+Enforces Linux-native interfaces and safe subprocess execution (shell=False).
 """
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-import shlex
-import subprocess
 from typing import Dict, List, Any, Optional, Union
 
 from core.models import Finding, Severity, utc_now
 from core.logger import Logger
+from core.command_exec import LinuxCommandRunner, CommandExecutionResult
 
 
 class BaseScanner(ABC):
@@ -25,50 +25,17 @@ class BaseScanner(ABC):
 
     def run_command(self, cmd: Union[str, List[str]], timeout: int = 30) -> str:
         """
-        Execute command safely using argument lists where possible.
-        Applies strict timeout and error capture.
+        Execute command safely using LinuxCommandRunner (shell=False).
+        Returns stripped stdout if successful, or empty string on failure.
         """
-        try:
-            if isinstance(cmd, list):
-                result = subprocess.run(
-                    cmd,
-                    shell=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
-                )
-                return result.stdout.strip()
-            else:
-                # If string contains shell pipes or redirects, execute via sh safely if on POSIX
-                if any(char in cmd for char in ['|', '>', '<', '&', ';', '$']):
-                    shell_executable = '/bin/sh' if os.path.exists('/bin/sh') else None
-                    result = subprocess.run(
-                        cmd,
-                        shell=True,
-                        executable=shell_executable,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout
-                    )
-                    return result.stdout.strip()
-                else:
-                    argv = shlex.split(cmd, posix=(os.name != 'nt'))
-                    if not argv:
-                        return ""
-                    result = subprocess.run(
-                        argv,
-                        shell=False,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout
-                    )
-                    return result.stdout.strip()
-        except subprocess.TimeoutExpired:
-            return f"[ERROR] Command timed out after {timeout} seconds"
-        except FileNotFoundError:
-            return ""
-        except Exception as e:
-            return f"[ERROR] Execution failed: {str(e)}"
+        result = LinuxCommandRunner.execute(cmd, timeout=timeout)
+        if result.success:
+            return result.stdout.strip()
+        return ""
+
+    def run_command_detailed(self, cmd: Union[str, List[str]], timeout: int = 30) -> CommandExecutionResult:
+        """Execute command safely and return full structured result."""
+        return LinuxCommandRunner.execute(cmd, timeout=timeout)
 
     def add_finding(self, severity: str, title: str, description: str,
                     evidence: Any, remediation: str = "",
@@ -98,5 +65,5 @@ class BaseScanner(ABC):
 
     @abstractmethod
     def scan(self) -> List[Finding]:
-        """Execute scan and return list of findings"""
+        """Execute assessment and return discovered findings"""
         pass

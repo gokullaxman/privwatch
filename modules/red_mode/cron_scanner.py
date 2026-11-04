@@ -2,19 +2,21 @@
 PrivWatch 3.0 - Cron & Systemd Timer Scanner (Red Team Mode)
 Audits scheduled jobs, cron directories, systemd timers, and referenced script permissions
 to identify privilege escalation vulnerabilities without false alerts.
+Strictly Linux-native POSIX path and permission evaluation.
 """
 
 import os
 from pathlib import Path
 import re
 import shlex
+import stat
 from typing import List, Optional, Any, Set
 
 from core.scanner import BaseScanner, Finding
 from core.models import Severity
 from utils.file_utils import (
     find_writable_files_in_path, is_parent_writable,
-    get_file_stat_metadata, get_permission_string
+    get_file_stat_metadata, get_permission_string, is_insecurely_writable
 )
 from utils.system_info import is_root
 from config.settings import VECTOR_CRON, CRON_DIRS
@@ -46,12 +48,12 @@ class CronScanner(BaseScanner):
         if not os.path.exists(cron_dir):
             return
 
-        # Check if directory itself is writable by non-root
-        if os.access(cron_dir, os.W_OK) and not is_root():
+        # Check if directory itself is insecurely writable
+        if is_insecurely_writable(cron_dir):
             self.add_finding(
                 severity=Severity.CRITICAL.value,
                 title=f"Writable Cron Directory: {cron_dir}",
-                description=f"The system cron directory {cron_dir} is writable by the current unprivileged user.",
+                description=f"The system cron directory {cron_dir} is writable by unauthorized users.",
                 affected_resource=cron_dir,
                 evidence=get_file_stat_metadata(cron_dir),
                 detection_method="directory_permission_audit",
@@ -72,12 +74,12 @@ class CronScanner(BaseScanner):
         """Audit single cron configuration or script file"""
         meta = get_file_stat_metadata(file_path)
 
-        # File is writable by current user
-        if os.access(file_path, os.W_OK) and not is_root():
+        # File is writable by unauthorized users
+        if is_insecurely_writable(file_path):
             self.add_finding(
                 severity=Severity.CRITICAL.value,
                 title=f"Writable Cron Job File: {file_path}",
-                description=f"The cron file {file_path} is writable by unprivileged users.",
+                description=f"The cron file {file_path} is writable by unauthorized users.",
                 affected_resource=file_path,
                 evidence=meta,
                 detection_method="file_permission_audit",
@@ -96,11 +98,11 @@ class CronScanner(BaseScanner):
             return
 
         meta = get_file_stat_metadata(crontab_path)
-        if os.access(crontab_path, os.W_OK) and not is_root():
+        if is_insecurely_writable(crontab_path):
             self.add_finding(
                 severity=Severity.CRITICAL.value,
                 title="Writable System Crontab: /etc/crontab",
-                description="The primary system crontab file is writable by the current unprivileged user.",
+                description="The primary system crontab file is writable by unauthorized users.",
                 affected_resource=crontab_path,
                 evidence=meta,
                 detection_method="file_permission_audit",
@@ -126,26 +128,42 @@ class CronScanner(BaseScanner):
                 continue
 
             # Look for executable and script paths in cron command
-            paths = re.findall(r'((?:[a-zA-Z]:)?[/\\][a-zA-Z0-9_\.\-~]+(?:[/\\][a-zA-Z0-9_\.\-~]+)*)', line)
+            paths = re.findall(r'((?:[a-zA-Z]:)?[/\\][a-zA-Z0-9_\.\-~]+(?:[/\\][a-zA-Z0-9_\.\-~]+)+)', line)
             for p in paths:
-                # Skip system binaries that are expected to be secure unless they are writable
                 if os.path.exists(p) and os.path.isfile(p):
-                    if os.access(p, os.W_OK) and not is_root():
-                        self.add_finding(
-                            severity=Severity.CRITICAL.value,
-                            title=f"Writable Script Referenced in Cron: {p}",
-                            description=f"Cron file {cron_file_path} references executable {p}, which is writable by the current user.",
-                            affected_resource=p,
-                            evidence={
-                                'cron_file': cron_file_path,
-                                'cron_line': line,
-                                'script_stat': get_file_stat_metadata(p)
-                            },
-                            detection_method="cron_reference_permission_audit",
-                            risk_explanation="Modifying the script will result in command execution under the user running the cron job (often root).",
-                            remediation=f"Harden script permissions: chmod 755 {p} && chown root:root {p}",
-                            confidence=0.98
+                    try:
+                        st = os.stat(p)
+                        # A script in cron is vulnerable if:
+                        # 1. World-writable
+                        # 2. Group-writable to non-root
+                        # 3. Not owned by root (st_uid != 0)
+                        # 4. Or writable by current user
+                        curr_euid = os.geteuid() if hasattr(os, 'geteuid') else -1
+                        is_insecure = (
+                            bool(st.st_mode & stat.S_IWOTH) or
+                            bool((st.st_mode & stat.S_IWGRP) and st.st_gid != 0) or
+                            (st.st_uid != 0) or
+                            (curr_euid != 0 and os.access(p, os.W_OK)) or
+                            is_insecurely_writable(p)
                         )
+                        if is_insecure:
+                            self.add_finding(
+                                severity=Severity.CRITICAL.value,
+                                title=f"Writable Script Referenced in Cron: {p}",
+                                description=f"Cron file {cron_file_path} references executable {p}, which is writable or controlled by unauthorized users.",
+                                affected_resource=p,
+                                evidence={
+                                    'cron_file': cron_file_path,
+                                    'cron_line': line,
+                                    'script_stat': get_file_stat_metadata(p)
+                                },
+                                detection_method="cron_reference_permission_audit",
+                                risk_explanation="Modifying the script will result in command execution under the user running the cron job (often root).",
+                                remediation=f"Harden script permissions: chmod 755 {p} && chown root:root {p}",
+                                confidence=0.98
+                            )
+                    except Exception:
+                        pass
 
     def _audit_systemd_timers(self):
         """Audit systemd timers and associated service units"""
@@ -165,11 +183,11 @@ class CronScanner(BaseScanner):
                         service_name = entry.name.replace(".timer", ".service")
                         service_path = os.path.join(sdir, service_name)
                         if os.path.exists(service_path):
-                            if os.access(service_path, os.W_OK) and not is_root():
+                            if is_insecurely_writable(service_path):
                                 self.add_finding(
                                     severity=Severity.CRITICAL.value,
                                     title=f"Writable Systemd Timer Service: {service_path}",
-                                    description=f"Systemd timer unit {entry.path} triggers {service_path}, which is writable by unprivileged users.",
+                                    description=f"Systemd timer unit {entry.path} triggers {service_path}, which is writable by unauthorized users.",
                                     affected_resource=service_path,
                                     evidence=get_file_stat_metadata(service_path),
                                     detection_method="systemd_unit_permission_audit",

@@ -12,7 +12,7 @@ from typing import List, Optional, Any, Dict
 from core.scanner import BaseScanner, Finding
 from core.models import Severity
 from utils.gtfobins import GTFOBins
-from utils.file_utils import get_permission_string, is_parent_writable, get_file_stat_metadata
+from utils.file_utils import get_permission_string, is_parent_writable, get_file_stat_metadata, is_insecurely_writable
 from config.settings import VECTOR_SUID, STANDARD_BIN_DIRS
 
 
@@ -78,8 +78,8 @@ class SuidScanner(BaseScanner):
         gtfo = GTFOBins.lookup(binary_name)
         is_allowed = binary_path in self.allowlist or os.path.realpath(binary_path) in self.allowlist
 
-        # Case 1: Binary is world-writable or writable by current user
-        if os.access(binary_path, os.W_OK):
+        # Case 1: Binary is world-writable or insecurely writable by unauthorized users
+        if is_insecurely_writable(binary_path):
             self.add_finding(
                 severity=Severity.CRITICAL.value,
                 title=f"Writable SUID Binary: {binary_path}",

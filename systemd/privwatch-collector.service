@@ -1,0 +1,26 @@
+[Unit]
+Description=PrivWatch 3.0 Privileged Security Telemetry Collector
+Documentation=https://github.com/gokullaxman/privwatch
+After=auditd.service systemd-journald.service
+Wants=auditd.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -m core.privileged_service
+Restart=always
+RestartSec=5s
+
+# Linux Hardening & Narrow Privilege Separation
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_AUDIT_READ CAP_SYS_PTRACE
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_AUDIT_READ
+NoNewPrivileges=yes
+RuntimeDirectory=privwatch
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

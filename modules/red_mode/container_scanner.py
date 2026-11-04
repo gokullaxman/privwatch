@@ -5,6 +5,7 @@ Audits container environments, exposed docker sockets, privileged flags, and bre
 
 import os
 from pathlib import Path
+import stat
 from typing import List, Optional, Any
 
 from core.scanner import BaseScanner, Finding
@@ -55,20 +56,26 @@ class ContainerScanner(BaseScanner):
 
         for sock in socket_paths:
             if os.path.exists(sock):
-                # Check write permissions
-                if os.access(sock, os.W_OK):
-                    self.add_finding(
-                        severity=Severity.CRITICAL.value,
-                        title=f"Writable Docker/Container Socket: {sock}",
-                        description=f"The container runtime socket {sock} is writable by the current user.",
-                        affected_resource=sock,
-                        evidence=get_file_stat_metadata(sock),
-                        detection_method="container_socket_permission_audit",
-                        risk_explanation="Direct root compromise. Any process with write access to the Docker socket can spawn a container with host filesystem mounted to execute commands as host root.",
-                        remediation=f"Restrict socket access to the docker group and root: chmod 660 {sock} && chown root:docker {sock}",
-                        references=["https://attack.mitre.org/techniques/T1611/"],
-                        confidence=1.0
-                    )
+                try:
+                    st = os.stat(sock)
+                    curr_euid = os.geteuid() if hasattr(os, 'geteuid') else -1
+                    is_unprivileged = (curr_euid != 0)
+                    # Socket is insecure if world-writable or accessible by unprivileged user
+                    if (st.st_mode & stat.S_IWOTH) or (is_unprivileged and os.access(sock, os.W_OK)):
+                        self.add_finding(
+                            severity=Severity.CRITICAL.value,
+                            title=f"Insecurely Writable Container Socket: {sock}",
+                            description=f"The container runtime socket {sock} is writable by unauthorized users.",
+                            affected_resource=sock,
+                            evidence=get_file_stat_metadata(sock),
+                            detection_method="container_socket_permission_audit",
+                            risk_explanation="Direct root compromise. Any process with write access to the Docker socket can spawn a container with host filesystem mounted to execute commands as host root.",
+                            remediation=f"Restrict socket access to docker group and root: chmod 660 {sock} && chown root:docker {sock}",
+                            references=["https://attack.mitre.org/techniques/T1611/"],
+                            confidence=1.0
+                        )
+                except Exception:
+                    pass
 
     def _check_privileged_container_indicators(self):
         """Audit container for privileged breakout indicators"""

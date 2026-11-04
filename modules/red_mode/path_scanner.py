@@ -10,7 +10,7 @@ from typing import List, Optional, Any
 
 from core.scanner import BaseScanner, Finding
 from core.models import Severity
-from utils.file_utils import get_file_stat_metadata
+from utils.file_utils import get_file_stat_metadata, is_insecurely_writable
 
 
 class PathScanner(BaseScanner):
@@ -58,8 +58,8 @@ class PathScanner(BaseScanner):
             if not os.path.exists(entry) or not os.path.isdir(entry):
                 continue
 
-            # Check if directory is writable by unprivileged user
-            if os.access(entry, os.W_OK) and (os.geteuid() != 0 if hasattr(os, 'geteuid') else False):
+            # Check if directory is insecurely writable by unauthorized users
+            if is_insecurely_writable(entry):
                 # If a writable directory appears before /usr/bin or /bin, it's CRITICAL
                 is_prioritized = any(
                     std_dir in entries[idx + 1:]

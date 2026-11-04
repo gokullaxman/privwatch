@@ -5,6 +5,7 @@ Audits sshd_config settings, private host keys, and ~/.ssh/authorized_keys permi
 
 import os
 from pathlib import Path
+import stat
 from typing import List, Optional, Any
 
 from core.scanner import BaseScanner, Finding
@@ -81,13 +82,17 @@ class SshScanner(BaseScanner):
             return
 
         try:
+            curr_euid = os.geteuid() if hasattr(os, 'geteuid') else -1
+            is_unprivileged = (curr_euid != 0)
             for entry in os.scandir(ssh_dir):
                 if entry.is_file() and entry.name.startswith("ssh_host_") and entry.name.endswith("_key"):
-                    if os.access(entry.path, os.R_OK) and (os.geteuid() != 0 if hasattr(os, 'geteuid') else False):
+                    st = entry.stat(follow_symlinks=False)
+                    is_insecure_read = (st.st_mode & stat.S_IROTH) or ((st.st_mode & stat.S_IRGRP) and st.st_gid != 0) or (is_unprivileged and os.access(entry.path, os.R_OK))
+                    if is_insecure_read:
                         self.add_finding(
                             severity=Severity.CRITICAL.value,
                             title=f"Readable SSH Private Host Key: {entry.name}",
-                            description=f"The SSH host private key {entry.path} is readable by unprivileged users.",
+                            description=f"The SSH host private key {entry.path} has unauthorized read permissions.",
                             affected_resource=entry.path,
                             evidence=get_file_stat_metadata(entry.path),
                             detection_method="ssh_key_permission_audit",

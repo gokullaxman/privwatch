@@ -31,7 +31,13 @@ class TelemetryHealthMonitor:
 
         # 2. Linux Audit Subsystem (auditd)
         audit_path = self.config.audit_log_path or "/var/log/audit/audit.log"
-        sources['auditd'] = self._check_file_source("Linux Audit Subsystem (auditd)", audit_path)
+        audit_status = self._check_file_source("Linux Audit Subsystem (auditd)", audit_path)
+        if not audit_status.readable:
+            audit_status.error_message = (
+                "Reliable kernel process execution monitoring is unavailable (auditd not readable or inactive). "
+                "/proc polling alone cannot guarantee detection of transient execution."
+            )
+        sources['auditd'] = audit_status
 
         # 3. Systemd Journal (journalctl)
         sources['systemd_journal'] = self._check_command_source("systemd Journal", "journalctl")

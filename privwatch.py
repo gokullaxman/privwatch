@@ -11,15 +11,9 @@ import os
 from pathlib import Path
 import sys
 
-# Ensure UTF-8 output on Windows consoles
-if sys.platform == 'win32':
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    if hasattr(sys.stderr, 'reconfigure'):
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-
 from core.config import PrivWatchConfig
 from core.orchestrator import PrivWatchOrchestrator
+from core.platform_validator import LinuxPlatformValidator, UnsupportedPlatformError
 from core.logger import Logger
 from core.models import Severity, SystemPosture, format_iso, utc_now
 from utils.system_info import is_root, get_os_info, get_kernel_version, get_current_user
@@ -68,6 +62,12 @@ def generate_reports(findings, orchestrator, output_dir, report_formats, mode):
 
 
 def main():
+    # Enforce 100% Linux-native execution environment
+    try:
+        sys_report = LinuxPlatformValidator.validate_platform(strict=True)
+    except UnsupportedPlatformError as e:
+        sys.stderr.write(f"\n{str(e)}\n\n")
+        sys.exit(1)
     parser = argparse.ArgumentParser(
         description="PrivWatch 3.0 - Linux Privilege Escalation Detection, Forensics & Prevention",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -138,10 +138,8 @@ Examples:
 
     # Permission advisory
     if not is_root():
-        if sys.platform != 'win32':
-            Logger.warning("Not executing as root (UID 0) - some system file audits and log sources may be limited.")
-        else:
-            Logger.warning("Running on Windows environment - POSIX privilege escalation vectors evaluated with degraded host telemetry.")
+        Logger.warning(f"Executing with unprivileged UID {os.geteuid() if hasattr(os, 'geteuid') else 'unknown'}.")
+        Logger.warning("Comprehensive assessment of /etc/shadow, /etc/sudoers, and audit logs requires root (UID 0).")
         print()
 
     # Mode: Dashboard

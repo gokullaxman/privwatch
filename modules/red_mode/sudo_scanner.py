@@ -11,7 +11,7 @@ from typing import List, Optional, Any
 from core.scanner import BaseScanner, Finding
 from core.models import Severity
 from utils.gtfobins import GTFOBins
-from utils.file_utils import get_permission_string, get_file_stat_metadata
+from utils.file_utils import get_permission_string, get_file_stat_metadata, is_insecurely_writable
 from config.settings import VECTOR_SUDO, DANGEROUS_SUDO
 
 
@@ -36,7 +36,7 @@ class SudoScanner(BaseScanner):
 
         # 2. Check sudo privileges for current user non-interactively
         # -n prevents prompting for password
-        output = self.run_command("sudo -n -l 2>/dev/null", timeout=15)
+        output = self.run_command(["sudo", "-n", "-l"], timeout=15)
         if output and ("may run the following" in output.lower() or "user" in output.lower()):
             self._analyze_sudo_l_output(output)
 
@@ -69,11 +69,11 @@ class SudoScanner(BaseScanner):
             )
 
         # Sudoers must not be writable by non-root
-        if os.access(file_path, os.W_OK) and uid == 0 and os.geteuid() != 0 if hasattr(os, 'geteuid') else False:
+        if is_insecurely_writable(file_path):
             self.add_finding(
                 severity=Severity.CRITICAL.value,
-                title=f"Sudoers File Writable by Current User: {file_path}",
-                description=f"The file {file_path} has write permissions for non-root users.",
+                title=f"Sudoers File Insecurely Writable: {file_path}",
+                description=f"The file {file_path} has unauthorized write permissions.",
                 affected_resource=file_path,
                 evidence=meta,
                 detection_method="file_permission_audit",

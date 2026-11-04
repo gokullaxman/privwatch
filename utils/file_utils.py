@@ -1,6 +1,7 @@
 """
-PrivWatch 3.0 - File & Permission Utilities
-Safe permission auditing, stat analysis, and path traversal prevention.
+PrivWatch 3.0 - Linux File & Permission Utilities
+Safe permission auditing, stat analysis, POSIX ACL inspection, and path traversal prevention.
+Strictly adheres to Linux DAC/MAC semantics without cross-platform workarounds.
 """
 
 import os
@@ -8,9 +9,11 @@ from pathlib import Path
 import stat
 from typing import List, Tuple, Optional, Dict, Any
 
+from core.command_exec import LinuxCommandRunner
+
 
 def is_suid(file_path: str) -> bool:
-    """Check if file has SUID (setuid) bit set"""
+    """Check if file has SUID (setuid) bit set."""
     try:
         st = os.stat(file_path, follow_symlinks=False)
         return bool(st.st_mode & stat.S_ISUID)
@@ -19,7 +22,7 @@ def is_suid(file_path: str) -> bool:
 
 
 def is_sgid(file_path: str) -> bool:
-    """Check if file has SGID (setgid) bit set"""
+    """Check if file has SGID (setgid) bit set."""
     try:
         st = os.stat(file_path, follow_symlinks=False)
         return bool(st.st_mode & stat.S_ISGID)
@@ -28,7 +31,7 @@ def is_sgid(file_path: str) -> bool:
 
 
 def is_world_writable(file_path: str) -> bool:
-    """Check if file or directory has others-write (S_IWOTH) permission"""
+    """Check if file or directory has others-write (S_IWOTH) permission."""
     try:
         st = os.stat(file_path)
         return bool(st.st_mode & stat.S_IWOTH)
@@ -36,8 +39,51 @@ def is_world_writable(file_path: str) -> bool:
         return False
 
 
+def is_insecurely_writable(file_path: str, is_root_user: Optional[bool] = None) -> bool:
+    """
+    Determine if a system file has unauthorized write permissions.
+    Avoids false positives where root user can write to normal root files,
+    and avoids false positives where non-root user can write to their own temp files.
+    """
+    try:
+        st = os.stat(file_path)
+    except Exception:
+        return False
+
+    mode = st.st_mode
+    uid = st.st_uid
+    gid = st.st_gid
+
+    # 1. World-writable bit is universally insecure for system files
+    if mode & stat.S_IWOTH:
+        return True
+
+    # 2. Group-writable to a non-root group (GID != 0 and GID != shadow/root)
+    if (mode & stat.S_IWGRP) and gid not in (0,):
+        return True
+
+    # 3. If file is owned by root (UID 0), but current unprivileged user has write access
+    curr_euid = os.geteuid() if hasattr(os, 'geteuid') else -1
+    is_root = (curr_euid == 0) if is_root_user is None else is_root_user
+
+    if not is_root and uid == 0:
+        # Unprivileged user can write to a root-owned file
+        if os.access(file_path, os.W_OK):
+            return True
+
+    return False
+
+
+def get_posix_acls(file_path: str) -> Optional[str]:
+    """Retrieve POSIX ACLs using getfacl if available."""
+    res = LinuxCommandRunner.execute(["getfacl", "-p", "-c", "-E", file_path], timeout=5)
+    if res.success and res.stdout_clean():
+        return res.stdout_clean()
+    return None
+
+
 def get_file_owner(file_path: str) -> Tuple[int, int]:
-    """Get file owner UID and GID"""
+    """Get file owner UID and GID."""
     try:
         st = os.stat(file_path)
         return (st.st_uid, st.st_gid)
@@ -46,7 +92,7 @@ def get_file_owner(file_path: str) -> Tuple[int, int]:
 
 
 def get_permission_string(file_path: str) -> str:
-    """Get standard 10-character human-readable permission string (e.g. -rwsr-xr-x)"""
+    """Get standard 10-character human-readable permission string (e.g. -rwsr-xr-x)."""
     try:
         st = os.stat(file_path)
         mode = st.st_mode
@@ -79,15 +125,16 @@ def get_permission_string(file_path: str) -> str:
 
 
 def find_writable_files_in_path(path_dir: str) -> List[str]:
-    """Find files writable by current execution context within a directory"""
+    """Find files in directory that are world-writable or insecurely writable."""
     writable = []
     if not os.path.exists(path_dir) or not os.path.isdir(path_dir):
         return writable
     try:
         for entry in os.scandir(path_dir):
             try:
-                if entry.is_file(follow_symlinks=False) and os.access(entry.path, os.W_OK):
-                    writable.append(entry.path)
+                if entry.is_file(follow_symlinks=False):
+                    if is_insecurely_writable(entry.path):
+                        writable.append(entry.path)
             except Exception:
                 continue
     except Exception:
@@ -96,10 +143,10 @@ def find_writable_files_in_path(path_dir: str) -> List[str]:
 
 
 def is_parent_writable(file_path: str) -> bool:
-    """Check if the parent directory of a file is writable (enables replacing binary)"""
+    """Check if the parent directory of a file is insecurely writable."""
     try:
         parent = str(Path(file_path).parent.resolve())
-        return os.access(parent, os.W_OK)
+        return is_insecurely_writable(parent)
     except Exception:
         return False
 
@@ -121,10 +168,10 @@ def safe_resolve_path(path_str: str, base_dir: Optional[str] = None) -> Optional
 
 
 def get_file_stat_metadata(file_path: str) -> Dict[str, Any]:
-    """Retrieve detailed stat metadata dictionary for evidence bundles"""
+    """Retrieve detailed stat metadata dictionary for evidence bundles."""
     try:
         st = os.stat(file_path)
-        return {
+        meta = {
             'path': file_path,
             'size_bytes': st.st_size,
             'uid': st.st_uid,
@@ -135,5 +182,9 @@ def get_file_stat_metadata(file_path: str) -> Dict[str, Any]:
             'is_world_writable': bool(st.st_mode & stat.S_IWOTH),
             'parent_writable': is_parent_writable(file_path)
         }
+        acls = get_posix_acls(file_path)
+        if acls:
+            meta['posix_acls'] = acls
+        return meta
     except Exception as e:
         return {'path': file_path, 'error': str(e)}

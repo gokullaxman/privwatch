@@ -4,6 +4,28 @@ All notable changes to the PrivWatch platform will be documented in this file.
 
 ---
 
+## [3.0.1] - 2026-11-04 - Linux-Native Complete Audit, Repair & Hardening
+
+### Added
+- **Linux Platform Validator (`core/platform_validator.py`):** Strictly enforces Linux-native execution environment (Kali, Debian, Ubuntu, Fedora, RHEL, Arch) and terminates on non-Linux hosts.
+- **Safe Linux Command Runner (`core/command_exec.py`):** Structured subprocess execution (`shell=False`) with shell metacharacter rejection, explicit argument lists, timeouts, and separate stdout/stderr capture.
+- **Privilege Separation Daemon (`core/privileged_service.py`):** Privileged telemetry collector operating over restricted Unix Domain Socket (`/run/privwatch/privwatch.sock`) with `0600` permissions and `SO_PEERCRED` client credential validation.
+- **Systemd Service Definition (`systemd/privwatch-collector.service`):** Hardened systemd unit with narrow capabilities (`CAP_DAC_READ_SEARCH`, `CAP_AUDIT_READ`).
+- **Cryptographic Audit Hash Chaining (`core/storage.py`):** SHA-256 tamper-evident hash chaining linking administrative audit trail entries with `verify_audit_chain_integrity()`.
+- **REST API Authentication & Authorization (`web/app.py`):** Enforces API Key / Bearer tokens for all mutating administrative endpoints with role-based access control and sliding-window rate limiting.
+- **Distribution-Aware Kernel Advisory Matching (`modules/red_mode/kernel_scanner.py`):** Integrated USN, DSA, and RHSA package fix evaluation with Debian/RPM version comparators.
+- **Linux Audit Rules Definition (`config/audit.rules`):** Scoped syscall monitoring rules for `execve`, `execveat`, `setuid`, `setgid`, and `capset`.
+
+### Fixed & Hardened
+- **Removed all `shell=True`:** Eradicated arbitrary shell command construction across core and response engines.
+- **Removed all Windows compatibility code:** Removed `win32`, `windll`, `IsUserAnAdmin`, and cross-platform fallbacks.
+- **Fixed Passwd Scanner Semantics:** Canonical `/etc/passwd` path validation eliminates false positive alerts on user temporary test files.
+- **Fixed Remediation Rollback:** Replaced shell strings and insecure `chmod 666` commands with typed `RemediationAction` structures, exact original bitmask restoration, symlink protection, and atomic failure rollback.
+- **Fixed Database Integrity:** Replaced `INSERT OR REPLACE` with append-only policies and fixed confidence restoration so `0.0` is preserved.
+- **Expanded Pytest Suite:** Expanded automated test suite from 34 to 44 comprehensive tests covering API auth, platform validation, hash chaining, and rollback.
+
+---
+
 ## [3.0.0] - 2026-11-04 - PrivWatch 3.0 Platform Transformation
 
 ### Added

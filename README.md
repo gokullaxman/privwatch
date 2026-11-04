@@ -2,7 +2,8 @@
 
 **Evidence-Driven Linux Privilege Escalation Detection, Telemetry Monitoring, Forensics & Prevention Platform**
 
-[![Tests](https://img.shields.io/badge/tests-34%20passed-brightgreen.svg)](docs/TESTING.md)
+[![Tests](https://img.shields.io/badge/tests-44%20passed-brightgreen.svg)](docs/TESTING.md)
+[![Platform: 100% Linux](https://img.shields.io/badge/platform-Linux%20Only-blue.svg)](docs/LINUX_PLATFORM_SUPPORT.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Status: Production](https://img.shields.io/badge/status-production-success.svg)](CHANGELOG.md)
@@ -156,7 +157,7 @@ privwatch/
 
 ### 1. Installation
 ```bash
-git clone https://github.com/charith-Penugonda/privwatch.git
+git clone https://github.com/gokullaxman/privwatch.git
 cd privwatch
 
 # Install dependencies
@@ -196,7 +197,13 @@ python3 privwatch.py --mode dashboard --port 8443
 
 ## 📖 Documentation Index
 
-- [Comprehensive Audit & Gap Analysis](docs/PRIVWATCH_3_AUDIT.md)
+- [Final Linux-Native Engineering Audit](docs/PRIVWATCH_3_FINAL_LINUX_AUDIT.md)
+- [Complete Defect Register](docs/PRIVWATCH_3_DEFECT_REGISTER.md)
+- [Defect Rectification & Hardening Report](docs/PRIVWATCH_3_RECTIFICATION_REPORT.md)
+- [Linux Platform Support Specification](docs/LINUX_PLATFORM_SUPPORT.md)
+- [Linux Audit Subsystem (auditd) Configuration](docs/LINUX_AUDIT_CONFIGURATION.md)
+- [Remediation & Rollback Security Model](docs/REMEDIATION_SECURITY.md)
+- [REST API & SOC Operations Security Model](docs/API_SECURITY.md)
 - [System Architecture Blueprint](docs/PRIVWATCH_3_ARCHITECTURE.md)
 - [Installation Guide](docs/INSTALLATION.md)
 - [User Guide & Operations Manual](docs/USAGE.md)

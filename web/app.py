@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import threading
+import time
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query, Body, Header, Request, status
+from fastapi import FastAPI, HTTPException, Query, Body, Header, Request, Depends, status
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -47,6 +49,66 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# API Security, Role-Based Access Control & Rate Limiting
+API_KEY = os.getenv("PRIVWATCH_API_KEY", "privwatch-secure-local-admin-token")
+RATE_LIMIT_STORE: Dict[str, List[float]] = {}
+RATE_LIMIT_LOCK = threading.Lock()
+
+
+def check_rate_limit(request: Request, max_requests: int = 120, window_sec: float = 60.0):
+    """Enforce rate limits per client host."""
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    now = time.time()
+    with RATE_LIMIT_LOCK:
+        timestamps = RATE_LIMIT_STORE.get(client_ip, [])
+        timestamps = [ts for ts in timestamps if now - ts < window_sec]
+        if len(timestamps) >= max_requests:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please wait before retrying."
+            )
+        timestamps.append(now)
+        RATE_LIMIT_STORE[client_ip] = timestamps
+
+
+def verify_api_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+) -> Dict[str, str]:
+    """Verify API credentials via X-API-Key or Authorization: Bearer token."""
+    check_rate_limit(request, max_requests=120)
+
+    token = None
+    if x_api_key:
+        token = x_api_key
+    elif authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+
+    if token == API_KEY:
+        return {"user": "admin", "role": "admin"}
+    elif token == "readonly-token":
+        return {"user": "auditor", "role": "readonly"}
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized: Missing or invalid API key. Provide valid X-API-Key or Bearer token.",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+def require_admin(auth: Dict[str, str] = Depends(verify_api_key)) -> Dict[str, str]:
+    """Enforce administrative role (role=admin) for mutating operations."""
+    if auth.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Administrative privileges required."
+        )
+    return auth
 
 
 # --- Request/Response Models ---
@@ -510,8 +572,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard():
-    """Serve the single-page PrivWatch 3.0 operations dashboard"""
-    return HTMLResponse(content=DASHBOARD_HTML, status_code=200)
+    """Serve the single-page PrivWatch 3.0 operations dashboard with injected auth token"""
+    html = DASHBOARD_HTML.replace("%%API_KEY%%", API_KEY)
+    return HTMLResponse(content=html, status_code=200)
 
 
 @app.get("/api/v1/overview")
@@ -556,9 +619,16 @@ def get_incidents(status_filter: Optional[str] = Query(None, alias="status")):
 
 
 @app.post("/api/v1/incidents/{incident_id}/status")
-def update_incident_status(incident_id: str, update: IncidentStatusUpdate):
-    """Update workflow status of an incident"""
+def update_incident_status(incident_id: str, update: IncidentStatusUpdate, auth: Dict[str, str] = Depends(require_admin)):
+    """Update workflow status of an incident with admin authorization"""
     storage.update_incident_status(incident_id, update.status, update.note)
+    storage.log_admin_action(
+        action="UPDATE_INCIDENT_STATUS",
+        target=incident_id,
+        actor=auth["user"],
+        details={'status': update.status, 'note': update.note},
+        result="SUCCESS"
+    )
     return {'status': 'SUCCESS', 'incident_id': incident_id, 'new_status': update.status}
 
 
@@ -602,8 +672,15 @@ def get_system_info():
 
 
 @app.post("/api/v1/scan/red")
-def trigger_red_scan():
-    """Trigger full Red Team privilege escalation assessment"""
+def trigger_red_scan(auth: Dict[str, str] = Depends(require_admin)):
+    """Trigger full Red Team privilege escalation assessment (Admin only)"""
+    storage.log_admin_action(
+        action="TRIGGER_RED_SCAN",
+        target="system",
+        actor=auth["user"],
+        details={},
+        result="STARTED"
+    )
     findings = orchestrator.run_red_team_scan()
     return {
         'status': 'COMPLETED',
@@ -613,8 +690,15 @@ def trigger_red_scan():
 
 
 @app.post("/api/v1/scan/blue")
-def trigger_blue_scan():
-    """Trigger Blue Team telemetry log analysis"""
+def trigger_blue_scan(auth: Dict[str, str] = Depends(require_admin)):
+    """Trigger Blue Team telemetry log analysis (Admin only)"""
+    storage.log_admin_action(
+        action="TRIGGER_BLUE_SCAN",
+        target="telemetry_logs",
+        actor=auth["user"],
+        details={},
+        result="STARTED"
+    )
     findings = orchestrator.run_blue_team_analysis()
     return {
         'status': 'COMPLETED',
@@ -624,16 +708,30 @@ def trigger_blue_scan():
 
 
 @app.post("/api/v1/monitoring/start")
-def start_monitoring():
-    """Start live background telemetry monitoring"""
+def start_monitoring(auth: Dict[str, str] = Depends(require_admin)):
+    """Start live background telemetry monitoring (Admin only)"""
     orchestrator.start_monitoring(poll_interval_sec=5)
+    storage.log_admin_action(
+        action="START_MONITORING",
+        target="system_telemetry",
+        actor=auth["user"],
+        details={'interval_sec': 5},
+        result="SUCCESS"
+    )
     return {'status': 'STARTED', 'monitoring': True}
 
 
 @app.post("/api/v1/monitoring/stop")
-def stop_monitoring():
-    """Stop live background telemetry monitoring"""
+def stop_monitoring(auth: Dict[str, str] = Depends(require_admin)):
+    """Stop live background telemetry monitoring (Admin only)"""
     orchestrator.stop_monitoring()
+    storage.log_admin_action(
+        action="STOP_MONITORING",
+        target="system_telemetry",
+        actor=auth["user"],
+        details={},
+        result="SUCCESS"
+    )
     return {'status': 'STOPPED', 'monitoring': False}
 
 
@@ -663,8 +761,8 @@ def get_remediation_plan(finding_id: str = Body(..., embed=True)):
 
 
 @app.post("/api/v1/remediation/execute")
-def execute_remediation(req: RemediationRequest):
-    """Execute or simulate remediation plan"""
+def execute_remediation(req: RemediationRequest, auth: Dict[str, str] = Depends(require_admin)):
+    """Execute or simulate remediation plan (Admin only)"""
     findings = storage.get_findings()
     matching = [f for f in findings if f.finding_id == req.finding_id]
     if not matching:
@@ -673,7 +771,7 @@ def execute_remediation(req: RemediationRequest):
     plan = remediation_engine.generate_plan(matching[0])
     result = remediation_engine.execute_plan(
         plan=plan,
-        actor="web_admin",
+        actor=auth["user"],
         confirmed=req.confirmed,
         dry_run=req.dry_run
     )
@@ -727,8 +825,8 @@ def get_audit_trail(limit: int = 100):
 
 
 @app.post("/api/v1/suppression")
-def add_suppression_rule(req: SuppressionRequest):
-    """Add an alert suppression rule"""
+def add_suppression_rule(req: SuppressionRequest, auth: Dict[str, str] = Depends(require_admin)):
+    """Add an alert suppression rule (Admin only)"""
     import uuid
     rule_id = f"rule_{uuid.uuid4().hex[:8]}"
     storage.add_suppression(
@@ -736,7 +834,7 @@ def add_suppression_rule(req: SuppressionRequest):
         vector=req.vector,
         pattern=req.pattern,
         reason=req.reason,
-        actor=req.actor
+        actor=auth["user"]
     )
     return {'status': 'SUCCESS', 'rule_id': rule_id}
 

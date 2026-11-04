@@ -15,10 +15,18 @@ from core.storage import StorageEngine
 from core.config import PrivWatchConfig
 
 
+@pytest.fixture(autouse=True)
+def mock_linux_platform_for_tests(monkeypatch):
+    """Ensure unit tests evaluate with Linux OS semantics even when run in isolated dev sandboxes."""
+    import platform
+    if platform.system() != "Linux":
+        monkeypatch.setattr(platform, "system", lambda: "Linux")
+
+
 @pytest.fixture
 def temp_dir():
     """Create isolated temporary directory for test executions"""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         yield Path(td)
 
 
