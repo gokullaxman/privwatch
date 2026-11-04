@@ -75,3 +75,4 @@ If a multi-step remediation plan partially fails (e.g. action 1 succeeds, action
 ## 4. Symlink Traversal Protection
 
 PrivWatch refuses to modify targets that are symlinks (`os.path.islink(target) == True`). This prevents attackers from exploiting time-of-check to time-of-use (TOCTOU) symlink races to trick the privileged remediation engine into chmodding `/etc/shadow` or other arbitrary system files.
+

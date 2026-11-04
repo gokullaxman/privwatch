@@ -80,3 +80,34 @@ def test_report_generation_api(client):
     data = response.json()
     assert data['status'] == "SUCCESS"
     assert "privwatch_report" in data['output_file']
+
+
+def test_ml_status_api_endpoint(client):
+    response = client.get("/api/v1/ml/status")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "OPERATIONAL"
+    assert "registered_models" in data
+    assert "drift_monitor" in data
+
+
+def test_ml_evaluate_api_endpoint(client, admin_headers):
+    payload = {
+        "event_type": "SUID_EXECUTION",
+        "uid": 1000,
+        "euid": 0,
+        "pid": 4321,
+        "ppid": 1000,
+        "process": "bash",
+        "command": "/tmp/root_bash",
+        "evidence": {"exe": "/tmp/root_bash"}
+    }
+    response = client.post("/api/v1/ml/evaluate", json=payload, headers=admin_headers)
+    assert response.status_code == 200
+    res = response.json()
+    assert res["predicted_class"] in ["CONFIRMED_MALICIOUS", "PRIVILEGE_TRANSITION_ANOMALY"]
+    assert "anomaly_score" in res
+    assert "confidence" in res
+    assert "composite_risk_score" in res
+    assert len(res["contributing_features"]) > 0
+

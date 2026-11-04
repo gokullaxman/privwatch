@@ -11,5 +11,11 @@ reportlab>=3.6.0
 # Process Telemetry & System Metrics
 psutil>=5.9.0
 
+# Machine Learning, Anomaly Detection & Statistical Scoring (PrivWatch 3.1)
+numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
 # Automated Testing
 pytest>=7.0.0

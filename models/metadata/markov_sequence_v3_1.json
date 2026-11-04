@@ -1,0 +1,62 @@
+{
+  "model_id": "markov_sequence_v3_1",
+  "version": "3.1.0",
+  "algorithm": "First-Order Markov Chain with Laplace Smoothing",
+  "trained_at_iso": "2026-11-04T02:00:01Z",
+  "dataset_version": "curated_lab_v1",
+  "feature_schema": [
+    "uid",
+    "euid",
+    "gid",
+    "egid",
+    "uid_euid_mismatch",
+    "euid_is_root",
+    "uid_is_root",
+    "pid",
+    "ppid",
+    "pid_ppid_diff",
+    "ancestry_depth",
+    "is_daemon_user",
+    "is_interactive_shell",
+    "is_script_interpreter",
+    "is_network_tool",
+    "exe_in_writable_dir",
+    "exe_is_suid",
+    "exe_is_sgid",
+    "has_file_capabilities",
+    "modifies_sensitive_file",
+    "syscall_is_elevating",
+    "command_length",
+    "command_arg_count",
+    "command_has_pipes",
+    "source_is_auditd",
+    "source_is_procfs",
+    "source_is_auth_log",
+    "events_last_10s",
+    "events_last_60s",
+    "auth_fails_last_300s",
+    "time_delta_prev_event",
+    "consecutive_priv_events"
+  ],
+  "hyperparameters": {
+    "laplace_alpha": 0.05
+  },
+  "sha256_hash": "e5c246cfd7d6a49bfa31813bf06168eb20389eee9f2acd0b54cb38b4854423ae",
+  "validation_status": "APPROVED",
+  "metrics": {
+    "states_count": 8
+  },
+  "validation_report": {
+    "model_id": "markov_sequence_v3_1",
+    "approved": true,
+    "rejection_reasons": [],
+    "dataset_records_count": 0,
+    "leakage_check_passed": true,
+    "schema_check_passed": true,
+    "integrity_hash_verified": true,
+    "average_inference_latency_ms": 0.0,
+    "baseline_f1": 0.0,
+    "model_f1": 0.0,
+    "validation_timestamp_iso": "2026-11-04T02:00:01Z"
+  }
+}

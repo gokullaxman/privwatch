@@ -1,25 +1,26 @@
-# PrivWatch 3.0
+# PrivWatch 3.1
 
-**Evidence-Driven Linux Privilege Escalation Detection, Telemetry Monitoring, Forensics & Prevention Platform**
+**Evidence-Driven Linux Privilege Escalation Detection, AI/ML Anomaly Scoring, Telemetry Monitoring & Forensics Platform**
 
-[![Tests](https://img.shields.io/badge/tests-44%20passed-brightgreen.svg)](docs/TESTING.md)
+[![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen.svg)](docs/TESTING.md)
 [![Platform: 100% Linux](https://img.shields.io/badge/platform-Linux%20Only-blue.svg)](docs/LINUX_PLATFORM_SUPPORT.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python: 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
+[![Python: 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![ML: Validated](https://img.shields.io/badge/AI%2FML-Validated%20Gate-success.svg)](docs/ML_VALIDATION_GATE.md)
 [![Status: Production](https://img.shields.io/badge/status-production-success.svg)](CHANGELOG.md)
 
 ---
 
 ## 📋 Overview
 
-**PrivWatch 3.0** is an enterprise-grade Linux security platform engineered to identify local privilege escalation vulnerabilities, monitor system telemetry in real time, detect adversary exploitation attempts, reconstruct forensic attack timelines, and execute controlled least-privilege remediation.
+**PrivWatch 3.1** is an enterprise-grade Linux security platform engineered to identify local privilege escalation vulnerabilities, monitor system telemetry in real time, detect adversary exploitation attempts using a **four-tier hybrid AI/ML detection engine**, reconstruct forensic attack timelines, and execute controlled least-privilege remediation.
 
-Operating under a strict **Real System Data Only** standard, PrivWatch never fabricates telemetry or simulates alerts. Every finding and incident is cryptographically fingerprinted and directly tied to operating system evidence.
+Operating under a strict **Real System Data Only** standard, PrivWatch never fabricates telemetry or simulates alerts. Every finding, anomaly score, and incident is cryptographically fingerprinted and directly tied to operating system evidence.
 
 ```
 ╔═══════════════════════════════════════════════════════════╗
-║                  PrivWatch v3.0.0                         ║
-║        Privilege Escalation Detection & Forensics         ║
+║                  PrivWatch v3.1.0                         ║
+║        Linux Privilege Escalation & AI/ML Detection       ║
 ║                  Mode:              RED                   ║
 ╚═══════════════════════════════════════════════════════════╝
 ```
@@ -28,7 +29,16 @@ Operating under a strict **Real System Data Only** standard, PrivWatch never fab
 
 ## 🚀 Key Capabilities
 
-### 1. 🔴 Red Team Assessment Engine
+### 1. 🤖 Four-Tier Hybrid AI/ML Detection Engine (New in 3.1)
+- **Tier 1 (Deterministic Baseline):** Benchmark implementing established POSIX security heuristics (`DeterministicBaselineModel`).
+- **Tier 2 (Unsupervised Anomaly Scoring):** Dual-redundancy Isolation Forest (`LinuxIsolationForestDetector`) and Median Absolute Deviation modified Z-score scorer (`RobustStatisticalScorer`) for rare execution paths.
+- **Tier 3 (Supervised Threat Classifier):** Balanced Random Forest ensemble classifying events into 6 threat categories with probability calibration (`LinuxPrivilegeClassifier`).
+- **Tier 4 (Sequential Markov Modeling):** First-order Markov chain with Laplace smoothing evaluating state transitions across execution sequences (`MarkovPrivilegeSequenceModel`).
+- **Explainability & Attribution:** Every prediction outputs top contributing features, percentage weights, anomaly distance, and evidence links (`FeatureAttributor`).
+- **Model Validation Gate:** Strict 10-point gate enforcing schema completeness, zero-leakage scenario isolation, CPU latency budgets ($\le 25$ ms), and SHA-256 weight verification (`ModelValidationGate`).
+- **Model Drift Monitoring:** Tracks Population Stability Index (PSI) and inference latency profiles across live telemetry streams (`ModelDriftMonitor`).
+
+### 2. 🔴 Red Team Assessment Engine
 Audits 9 distinct Linux privilege escalation vectors:
 - **SUID/SGID Binaries:** Targeted enumeration across binary paths, parent directory write checks, GTFOBins catalog cross-referencing, and distribution allowlists.
 - **Sudo Misconfigurations:** Non-interactive sudo rule auditing, NOPASSWD detection, wildcard analysis, and sudoers permission validation.

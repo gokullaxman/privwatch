@@ -124,6 +124,18 @@ class PrivWatchOrchestrator:
             except Exception as e:
                 Logger.error(f"  → Detector error on {name}: {str(e)}")
 
+        # PrivWatch 3.1: Non-blocking Advisory ML Evaluation
+        if collected_events:
+            try:
+                from ml.inference.advisory_detector import AdvisoryMLDetector
+                ml_detector = AdvisoryMLDetector()
+                ml_findings = ml_detector.evaluate_telemetry(collected_events)
+                if ml_findings:
+                    Logger.info(f"  → ML Advisory: Generated {len(ml_findings)} explainable anomaly finding(s)")
+                    all_findings.extend(ml_findings)
+            except Exception as e:
+                Logger.warning(f"  → ML Advisory evaluation skipped: {e}")
+
         self.findings.extend(all_findings)
         self.events.extend(collected_events)
 

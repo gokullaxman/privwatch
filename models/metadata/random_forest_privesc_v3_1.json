@@ -1,0 +1,114 @@
+{
+  "model_id": "random_forest_privesc_v3_1",
+  "version": "3.1.0",
+  "algorithm": "Random Forest (Balanced Ensembles)",
+  "trained_at_iso": "2026-11-04T02:00:01Z",
+  "dataset_version": "curated_lab_v1",
+  "feature_schema": [
+    "uid",
+    "euid",
+    "gid",
+    "egid",
+    "uid_euid_mismatch",
+    "euid_is_root",
+    "uid_is_root",
+    "pid",
+    "ppid",
+    "pid_ppid_diff",
+    "ancestry_depth",
+    "is_daemon_user",
+    "is_interactive_shell",
+    "is_script_interpreter",
+    "is_network_tool",
+    "exe_in_writable_dir",
+    "exe_is_suid",
+    "exe_is_sgid",
+    "has_file_capabilities",
+    "modifies_sensitive_file",
+    "syscall_is_elevating",
+    "command_length",
+    "command_arg_count",
+    "command_has_pipes",
+    "source_is_auditd",
+    "source_is_procfs",
+    "source_is_auth_log",
+    "events_last_10s",
+    "events_last_60s",
+    "auth_fails_last_300s",
+    "time_delta_prev_event",
+    "consecutive_priv_events"
+  ],
+  "hyperparameters": {
+    "n_estimators": 50,
+    "max_depth": 8
+  },
+  "sha256_hash": "8c942e265289e389278c1b5c918c7fd24c7161c767f0eec836c2aaa87a4bc3a1",
+  "validation_status": "APPROVED",
+  "metrics": {
+    "macro_precision": 1.0,
+    "macro_recall": 1.0,
+    "macro_f1": 1.0,
+    "accuracy": 1.0,
+    "per_class": {
+      "BENIGN": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 0.0,
+        "support": 6
+      },
+      "PRIVILEGED_EXECUTION_ANOMALY": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 0.0,
+        "support": 2
+      },
+      "SUSPICIOUS": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 0.0,
+        "support": 3
+      }
+    },
+    "classes": [
+      "BENIGN",
+      "PRIVILEGED_EXECUTION_ANOMALY",
+      "SUSPICIOUS"
+    ],
+    "confusion_matrix": [
+      [
+        6,
+        0,
+        0
+      ],
+      [
+        0,
+        2,
+        0
+      ],
+      [
+        0,
+        0,
+        3
+      ]
+    ]
+  },
+  "validation_report": {
+    "model_id": "random_forest_privesc_v3_1",
+    "approved": true,
+    "rejection_reasons": [],
+    "dataset_records_count": 28,
+    "leakage_check_passed": true,
+    "schema_check_passed": true,
+    "integrity_hash_verified": true,
+    "average_inference_latency_ms": 10.539,
+    "baseline_f1": 0.6364,
+    "model_f1": 1.0,
+    "validation_timestamp_iso": "2026-11-04T02:00:01Z"
+  }
+}

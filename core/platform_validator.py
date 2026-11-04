@@ -141,3 +141,4 @@ class LinuxPlatformValidator:
                     continue
 
         return info
+

@@ -69,3 +69,4 @@ Detected operating system: 'Windows' (win32).
 Supported platforms: Kali Linux, Debian, Ubuntu, Fedora, RHEL, CentOS, Arch Linux.
 Windows, macOS, and BSD systems are strictly unsupported.
 ```
+

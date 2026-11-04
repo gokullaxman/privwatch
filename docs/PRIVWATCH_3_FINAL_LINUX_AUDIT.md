@@ -213,3 +213,4 @@ sudo venv/bin/python privwatch.py --mode dashboard --host 127.0.0.1 --port 8443
 
 1. **Auditd Requirement:** For 100% reliable detection of transient process execution (commands executing faster than `/proc` polling intervals), `auditd` must be running with `config/audit.rules` loaded into the kernel via `augenrules --load`.
 2. **Unprivileged Mode Limitations:** When running as a non-root user (EUID != 0), read access to `/etc/shadow`, root-only crontabs, and protected audit logs is restricted by Linux DAC permissions. PrivWatch operates gracefully, auditing all accessible resources while logging clear permission notices.
+

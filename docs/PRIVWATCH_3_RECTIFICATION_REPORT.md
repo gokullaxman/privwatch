@@ -104,3 +104,4 @@ PrivWatch 3.0 has undergone a complete, deep-code audit and architectural rectif
 - **Skipped:** 1 (`test_privileged_service_ipc_lifecycle` skipped only when non-Linux environment lacks `socket.AF_UNIX`)
 - **Failed:** 0
 - **Compilation Status:** 100% clean compilation across all 85 Python source files via `python3 -m compileall .`.
+

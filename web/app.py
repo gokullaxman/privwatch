@@ -838,3 +838,59 @@ def add_suppression_rule(req: SuppressionRequest, auth: Dict[str, str] = Depends
     )
     return {'status': 'SUCCESS', 'rule_id': rule_id}
 
+
+# -------------------------------------------------------------------------
+# Machine Learning & Analytical Endpoints (PrivWatch 3.1)
+# -------------------------------------------------------------------------
+
+@app.get("/api/v1/ml/status")
+def get_ml_status():
+    """Retrieve ML model registry status, drift metrics, and inference latency profile"""
+    from models.registry.model_registry import ModelRegistry
+    from ml.inference.model_runner import ModelRunner
+
+    registry = ModelRegistry()
+    runner = ModelRunner(registry)
+    drift_status = runner.drift_monitor.get_monitoring_status()
+
+    # Query registered metadata
+    meta_dir = registry.metadata_dir
+    models = {}
+    if os.path.exists(meta_dir):
+        for f in os.listdir(meta_dir):
+            if f.endswith(".json"):
+                m_path = os.path.join(meta_dir, f)
+                try:
+                    with open(m_path, "r", encoding="utf-8") as mfile:
+                        card = json.load(mfile)
+                        models[card.get("model_id")] = {
+                            "version": card.get("version"),
+                            "algorithm": card.get("algorithm"),
+                            "validation_status": card.get("validation_status"),
+                            "sha256": card.get("sha256_hash", "")[:16] + "..."
+                        }
+                except Exception:
+                    pass
+
+    return {
+        "status": "OPERATIONAL",
+        "registered_models": models,
+        "drift_monitor": drift_status
+    }
+
+
+@app.post("/api/v1/ml/evaluate")
+def evaluate_ml_event(payload: Dict[str, Any] = Body(...), auth: Dict[str, str] = Depends(verify_api_key)):
+    """
+    Evaluate an arbitrary security event payload through the ML inference engine.
+    Returns anomaly score, calibrated confidence, risk score, and feature attribution.
+    """
+    from core.models import SecurityEvent
+    from ml.inference.model_runner import ModelRunner
+
+    runner = ModelRunner()
+    ev = SecurityEvent.from_dict(payload)
+    explanation = runner.evaluate_event(ev)
+    return explanation.to_dict()
+
+

@@ -85,3 +85,4 @@ If `auditd` is disabled or `/var/log/audit/audit.log` is unreadable, PrivWatch 3
 - **Telemetry Health Report explicitly warns:**
   > `Reliable kernel process execution monitoring is unavailable (auditd not readable or inactive). /proc polling alone cannot guarantee detection of transient execution.`
 - Attackers executing transient commands (`whoami`, `cat /etc/shadow`) between polling intervals may evade detection.
+

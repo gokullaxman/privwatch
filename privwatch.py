@@ -22,7 +22,7 @@ from reports.pdf_generator import PDFGenerator
 from reports.csv_exporter import CSVExporter
 
 
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 
 
 def print_summary(findings, posture):

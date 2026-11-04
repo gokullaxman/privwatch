@@ -1,0 +1,63 @@
+{
+  "model_id": "isolation_forest_v3_1",
+  "version": "3.1.0",
+  "algorithm": "Isolation Forest & Robust Statistical Scorer",
+  "trained_at_iso": "2026-11-04T02:00:01Z",
+  "dataset_version": "curated_lab_v1",
+  "feature_schema": [
+    "uid",
+    "euid",
+    "gid",
+    "egid",
+    "uid_euid_mismatch",
+    "euid_is_root",
+    "uid_is_root",
+    "pid",
+    "ppid",
+    "pid_ppid_diff",
+    "ancestry_depth",
+    "is_daemon_user",
+    "is_interactive_shell",
+    "is_script_interpreter",
+    "is_network_tool",
+    "exe_in_writable_dir",
+    "exe_is_suid",
+    "exe_is_sgid",
+    "has_file_capabilities",
+    "modifies_sensitive_file",
+    "syscall_is_elevating",
+    "command_length",
+    "command_arg_count",
+    "command_has_pipes",
+    "source_is_auditd",
+    "source_is_procfs",
+    "source_is_auth_log",
+    "events_last_10s",
+    "events_last_60s",
+    "auth_fails_last_300s",
+    "time_delta_prev_event",
+    "consecutive_priv_events"
+  ],
+  "hyperparameters": {
+    "n_estimators": 50,
+    "contamination": 0.05
+  },
+  "sha256_hash": "9bde4092c11ddbea52c766b708663d721eff65134b5e5280b793ad7415f6de91",
+  "validation_status": "APPROVED",
+  "metrics": {
+    "status": "fitted_on_benign_baseline"
+  },
+  "validation_report": {
+    "model_id": "isolation_forest_v3_1",
+    "approved": true,
+    "rejection_reasons": [],
+    "dataset_records_count": 0,
+    "leakage_check_passed": true,
+    "schema_check_passed": true,
+    "integrity_hash_verified": true,
+    "average_inference_latency_ms": 0.0,
+    "baseline_f1": 0.0,
+    "model_f1": 0.0,
+    "validation_timestamp_iso": "2026-11-04T02:00:01Z"
+  }
+}

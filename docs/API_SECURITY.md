@@ -58,3 +58,4 @@ Unauthenticated requests to protected endpoints receive HTTP `401 Unauthorized`.
 - **Sliding-Window Rate Limiting:** All API routes enforce an in-memory sliding window limit of 120 requests per minute per client IP. Excessive requests are rejected with HTTP `429 Too Many Requests`.
 - **Path Traversal Prevention:** The `/api/v1/reports/download` endpoint strictly resolves file paths using `safe_resolve_path()`, ensuring requested files remain within the designated `reports/` output directory. Directory traversals (`../`) return HTTP `403 Access Denied`.
 - **Cryptographic Audit Trail:** Every administrative operation is recorded to `privwatch.db` with a SHA-256 hash chaining record linked to the previous transaction hash.
+

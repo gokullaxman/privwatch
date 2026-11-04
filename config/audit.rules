@@ -46,3 +46,4 @@
 ## 8. Lock Audit Configuration (Requires reboot to modify after enabling)
 ## Uncomment the following line for high-security hardened environments:
 ## -e 2
+

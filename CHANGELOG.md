@@ -4,6 +4,37 @@ All notable changes to the PrivWatch platform will be documented in this file.
 
 ---
 
+## [3.1.0] - 2026-11-04 - Advanced AI/ML Detection Model Upgrade
+
+### Added
+- **Canonical 32-Dimensional Linux Feature Space (`ml/features/`):**
+  - Standardized feature vector (`FeatureVector`) extracted exclusively from genuine Linux telemetry (`LinuxFeatureExtractor`).
+  - Covers identity transitions, process ancestry, execution context, syntax, source encoding, and temporal sliding windows.
+- **Four-Tier Hybrid Detection Architecture (`models/`):**
+  - **Tier 1 (Deterministic Baseline):** Benchmark implementing established POSIX security heuristics (`DeterministicBaselineModel`).
+  - **Tier 2 (Unsupervised Anomaly Scoring):** Dual-redundancy Isolation Forest (`LinuxIsolationForestDetector`) and Median Absolute Deviation modified Z-score scorer (`RobustStatisticalScorer`).
+  - **Tier 3 (Supervised Threat Classifier):** Balanced Random Forest ensemble classifying events into 6 threat categories with probability calibration (`LinuxPrivilegeClassifier`).
+  - **Tier 4 (Sequential Markov Model):** First-order Markov chain with Laplace smoothing calculating sequence log-likelihood across 8 security states (`MarkovPrivilegeSequenceModel`).
+- **Feature Attribution & Transparent Explainability (`ml/explainability/`):**
+  - Local feature attribution (`FeatureAttributor`) calculating top contributing features and contribution percentages.
+  - Transparent narrative rationale builder (`ExplanationEngine`) providing human-readable justifications backed by evidence.
+  - Multi-factor composite risk calculator (`CompositeRiskCalculator`) in $[0, 100]$ separating anomaly score, confidence, and severity.
+- **Model Validation Gate & Scientific Integrity Checker (`ml/validation/validation_gate.py`):**
+  - Automated pre-deployment gate enforcing schema completeness, zero scenario leakage, training reproducibility, CPU latency budgets ($\le 25$ ms), and baseline comparison ($\Delta \text{Accuracy} \ge -0.05$).
+- **Cryptographic Model Registry & Metadata Cards (`models/registry/`, `models/metadata/`):**
+  - Serialized model persistence with automated SHA-256 integrity verification, hyperparameter tracking, and validation gating.
+- **Model Drift & Telemetry Monitor (`ml/monitoring/drift_detector.py`):**
+  - Sliding-window monitor computing Population Stability Index (PSI) and tracking inference latency compliance.
+- **Non-Blocking Production ML Runner & Advisory Blue Team Integration (`ml/inference/`):**
+  - `ModelRunner` with sub-5ms CPU latency and guaranteed baseline fallback on failure.
+  - `AdvisoryMLDetector` integrated into Blue Team analysis and SOC REST API (`/api/v1/ml/status`, `/api/v1/ml/evaluate`).
+- **Verified Laboratory Scenario Datasets (`ml/data/`):**
+  - Multi-host scenario generator (`generate_curated_telemetry_dataset`) with leakage-free partitioning (`LeakageFreeSplitter`).
+- **Expanded Test Suite (69 Tests):**
+  - Comprehensive unit and integration test suite covering feature engineering, dataset validation, training pipeline, model serialization/tampering, evaluation metrics, inference, and drift.
+
+---
+
 ## [3.0.1] - 2026-11-04 - Linux-Native Complete Audit, Repair & Hardening
 
 ### Added
