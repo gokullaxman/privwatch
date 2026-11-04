@@ -66,6 +66,10 @@ class StorageEngine:
             except Exception:
                 pass
 
+    def close(self):
+        """Release storage resources."""
+        pass
+
     def _get_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection with WAL mode, busy timeout, and foreign key constraints."""
         conn = sqlite3.connect(self.db_path, timeout=30.0)
@@ -538,6 +542,7 @@ class StorageEngine:
         """Create indices for fast retrieval and correlation."""
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_source_type ON events(source, event_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_user ON events(user)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_uid ON events(uid)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_pid ON events(pid)")
@@ -549,6 +554,9 @@ class StorageEngine:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_src_tgt ON graph_edges(source_node_id, target_node_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_policy_eval_evt ON policy_evaluations(event_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_containment_target ON containment_ops(target)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_trail(action)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_trail(actor)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_trail(timestamp)")
 
     # --- Events ---
 
@@ -964,27 +972,38 @@ class StorageEngine:
             ))
         return incidents
 
-    def update_incident_status(self, incident_id: str, new_status: str, note: Optional[str] = None):
-        """Update workflow status of an incident and append optional note."""
+    def update_incident_status(
+        self,
+        incident_id: str,
+        new_status: str,
+        note: Optional[str] = None,
+        operator: str = "system",
+        rationale: Optional[str] = None
+    ):
+        """Update workflow status of an incident with operator and rationale tracking."""
         with self._lock:
             with self._get_connection() as conn:
-                row = conn.execute("SELECT notes_json FROM incidents WHERE incident_id = ?", (incident_id,)).fetchone()
+                row = conn.execute("SELECT status, notes_json FROM incidents WHERE incident_id = ?", (incident_id,)).fetchone()
                 if not row:
                     return
 
+                old_status = row['status']
                 notes = json.loads(row['notes_json']) if row['notes_json'] else []
-                if note:
-                    notes.append({
-                        'timestamp': format_iso(utc_now()),
-                        'status_change': new_status,
-                        'note': note
-                    })
+                now_iso = format_iso(utc_now())
+                entry_note = note or rationale or f"Transition from {old_status} to {new_status}"
+                notes.append({
+                    'timestamp': now_iso,
+                    'status_change': new_status,
+                    'from_status': old_status,
+                    'operator': operator,
+                    'note': entry_note
+                })
 
                 conn.execute("""
                     UPDATE incidents
                     SET status = ?, updated_at = ?, notes_json = ?
                     WHERE incident_id = ?
-                """, (new_status, format_iso(utc_now()), json.dumps(notes), incident_id))
+                """, (new_status, now_iso, json.dumps(notes), incident_id))
                 conn.commit()
 
     # --- Attack Graph Storage ---
@@ -1150,6 +1169,41 @@ class StorageEngine:
                 ))
                 conn.commit()
 
+    def get_containment_actions(
+        self,
+        target: Optional[str] = None,
+        status: Optional[str] = None
+    ) -> List[ContainmentAction]:
+        """Query containment actions filtered by target or status."""
+        query = "SELECT * FROM containment_ops WHERE 1=1"
+        params: List[Any] = []
+        if target:
+            query += " AND target = ?"
+            params.append(target)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY timestamp DESC"
+
+        with self._lock:
+            with self._get_connection() as conn:
+                rows = conn.execute(query, params).fetchall()
+
+        actions = []
+        for r in rows:
+            actions.append(ContainmentAction(
+                action_id=r["action_id"],
+                action_type=r["action_type"],
+                target=r["target"],
+                reason=r["reason"],
+                status=r["status"],
+                actor=r["actor"],
+                timestamp=parse_iso(r["timestamp"]) or utc_now(),
+                rollback_data=json.loads(r["rollback_data_json"]) if r["rollback_data_json"] else {},
+                result_details=json.loads(r["result_details_json"]) if r["result_details_json"] else {}
+            ))
+        return actions
+
     # --- Immutable Evidence Objects ---
 
     def save_evidence_object(
@@ -1179,6 +1233,23 @@ class StorageEngine:
         return sha256_hash
 
     # --- Cryptographic Hash Chained Audit Trail ---
+
+    def record_audit_log(
+        self,
+        action: str,
+        target: Optional[str] = None,
+        actor: str = "system",
+        details: Optional[Dict[str, Any]] = None,
+        result: str = "SUCCESS"
+    ) -> str:
+        """Record an entry to the immutable audit trail with SHA-256 hash chaining."""
+        return self.log_admin_action(
+            action=action,
+            target=target or "",
+            actor=actor,
+            details=details or {},
+            result=result
+        )
 
     def log_admin_action(
         self,
@@ -1269,6 +1340,10 @@ class StorageEngine:
             }
             for r in rows
         ]
+
+    def get_recent_audit_entries(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Alias for get_audit_logs."""
+        return self.get_audit_logs(limit=limit)
 
     # --- Alert Suppression ---
 

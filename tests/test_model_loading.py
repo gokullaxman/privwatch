@@ -91,3 +91,74 @@ def test_model_registry_rejects_unvalidated_model(temp_dir):
 
     with pytest.raises(PermissionError, match="validation status is 'UNVALIDATED'"):
         reg.load_model("unvalidated_test", verify_hash=True)
+
+
+def test_model_registry_rejects_revoked_model(temp_dir):
+    reg = ModelRegistry(base_dir=temp_dir)
+    baseline = DeterministicBaselineModel()
+
+    val_rep = ValidationReport(
+        model_id="revoked_test",
+        approved=True,
+        leakage_check_passed=True,
+        schema_check_passed=True,
+        integrity_hash_verified=True
+    )
+
+    path, meta = reg.save_model(
+        model_obj=baseline,
+        model_id="revoked_test",
+        version="3.1.0",
+        algorithm="Deterministic Baseline",
+        dataset_version="test_v1",
+        hyperparameters={},
+        metrics={},
+        validation_report=val_rep
+    )
+
+    # Revoke model
+    reg.revoke_model("revoked_test", operator="secops_lead", reason="Model drift / adversarial sample vulnerability")
+
+    # Attempting to load revoked model must raise PermissionError
+    with pytest.raises(PermissionError, match="REVOKED and cannot be loaded"):
+        reg.load_model("revoked_test")
+
+
+def test_model_registry_manifest_verification(temp_dir):
+    """Verify loading checks against manifest.json when present."""
+    reg = ModelRegistry(base_dir=temp_dir)
+    baseline = DeterministicBaselineModel()
+
+    val_rep = ValidationReport(
+        model_id="manifest_test",
+        approved=True,
+        leakage_check_passed=True,
+        schema_check_passed=True,
+        integrity_hash_verified=True
+    )
+
+    path, meta = reg.save_model(
+        model_obj=baseline,
+        model_id="manifest_test",
+        version="3.1.0",
+        algorithm="Deterministic Baseline",
+        dataset_version="test_v1",
+        hyperparameters={},
+        metrics={},
+        validation_report=val_rep
+    )
+
+    # Write a manifest with mismatched hash
+    manifest_path = os.path.join(temp_dir, "manifest.json")
+    with open(manifest_path, "w") as f:
+        json.dump({
+            "models": {
+                "manifest_test": {
+                    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            }
+        }, f)
+
+    with pytest.raises(ValueError, match="manifest checksum mismatch"):
+        reg.load_model("manifest_test", verify_hash=True)
+

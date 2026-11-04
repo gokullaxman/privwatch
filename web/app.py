@@ -5,6 +5,7 @@ interactive assessment triggers, forensic timelines, attack paths, controlled re
 """
 
 from datetime import datetime, timezone
+from enum import Enum
 import json
 import logging
 import os
@@ -38,6 +39,8 @@ config = PrivWatchConfig()
 orchestrator = PrivWatchOrchestrator(config)
 storage = orchestrator.storage
 remediation_engine = RemediationEngine(storage=storage, read_only=config.read_only_mode)
+from modules.response.containment_engine import ContainmentEngine, ContainmentMode
+containment_engine = ContainmentEngine(storage=storage)
 
 app = FastAPI(
     title="UATU Linux Edition API",
@@ -53,6 +56,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Inject strict browser security headers on all responses."""
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 def load_api_token() -> str:
@@ -146,12 +167,57 @@ def check_rate_limit(request: Request, max_requests: int = 120, window_sec: floa
         RATE_LIMIT_STORE[client_ip] = timestamps
 
 
+class ApiRole(str, Enum):
+    ADMIN = "admin"
+    OPERATOR = "operator"
+    ANALYST = "analyst"
+    AUDITOR = "auditor"
+    READ_ONLY = "readonly"
+
+
+ROLE_HIERARCHY: Dict[str, int] = {
+    ApiRole.ADMIN.value: 50,
+    ApiRole.OPERATOR.value: 40,
+    ApiRole.ANALYST.value: 30,
+    ApiRole.AUDITOR.value: 20,
+    ApiRole.READ_ONLY.value: 10,
+    "admin": 50,
+    "operator": 40,
+    "analyst": 30,
+    "auditor": 20,
+    "readonly": 10
+}
+
+
+def load_role_tokens() -> Dict[str, Dict[str, str]]:
+    """Load token to (user, role) mappings from configuration or environment."""
+    tokens = {
+        API_KEY: {"user": "admin", "role": ApiRole.ADMIN.value},
+        "readonly-token": {"user": "auditor", "role": ApiRole.READ_ONLY.value}
+    }
+    for path in ["/etc/uatu/api_tokens.json", "./config/api_tokens.json"]:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for item in data.get("tokens", []):
+                        tok = item.get("token")
+                        if tok:
+                            tokens[tok] = {
+                                "user": item.get("user", "user"),
+                                "role": item.get("role", ApiRole.READ_ONLY.value)
+                            }
+            except Exception:
+                pass
+    return tokens
+
+
 def verify_api_key(
     request: Request,
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ) -> Dict[str, str]:
-    """Verify API credentials via X-API-Key or Authorization: Bearer token."""
+    """Verify API credentials via X-API-Key or Authorization: Bearer token using constant-time comparison."""
     check_rate_limit(request, max_requests=120)
 
     token = None
@@ -162,10 +228,11 @@ def verify_api_key(
         if len(parts) == 2 and parts[0].lower() == "bearer":
             token = parts[1]
 
-    if token == API_KEY:
-        return {"user": "admin", "role": "admin"}
-    elif token == "readonly-token":
-        return {"user": "auditor", "role": "readonly"}
+    if token:
+        role_tokens = load_role_tokens()
+        for registered_token, auth_info in role_tokens.items():
+            if secrets.compare_digest(token, registered_token):
+                return auth_info
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -174,14 +241,26 @@ def verify_api_key(
     )
 
 
-def require_admin(auth: Dict[str, str] = Depends(verify_api_key)) -> Dict[str, str]:
-    """Enforce administrative role (role=admin) for mutating operations."""
-    if auth.get("role") != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Administrative privileges required."
-        )
-    return auth
+def require_role(min_role: ApiRole):
+    """Enforce minimum role requirement via role hierarchy."""
+    def dependency(auth: Dict[str, str] = Depends(verify_api_key)) -> Dict[str, str]:
+        user_role = auth.get("role", ApiRole.READ_ONLY.value)
+        user_level = ROLE_HIERARCHY.get(user_role, 0)
+        req_level = ROLE_HIERARCHY.get(min_role.value, 0)
+        if user_level < req_level:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Forbidden: Insufficient privileges. Required role: {min_role.value} or higher."
+            )
+        return auth
+    return dependency
+
+
+require_admin = require_role(ApiRole.ADMIN)
+require_operator = require_role(ApiRole.OPERATOR)
+require_analyst = require_role(ApiRole.ANALYST)
+require_auditor = require_role(ApiRole.AUDITOR)
+require_read_only = require_role(ApiRole.READ_ONLY)
 
 
 # --- Request/Response Models ---
@@ -197,6 +276,29 @@ class RemediationRequest(BaseModel):
 
 class RollbackRequest(BaseModel):
     finding_id: str
+
+class ProcessTerminationRequest(BaseModel):
+    pid: int = Field(..., gt=0, description="Process ID to terminate")
+    reason: str
+    confirm: bool = False
+    expected_start_time: Optional[int] = None
+
+class ProcessFreezeRequest(BaseModel):
+    pid: int = Field(..., gt=0, description="Process ID to freeze")
+    reason: str
+    confirm: bool = False
+
+class ProcessThawRequest(BaseModel):
+    action_id: str
+
+class NetworkIsolationRequest(BaseModel):
+    ip: str = Field(..., description="Target IPv4 or IPv6 address")
+    reason: str
+    timeout_seconds: int = 1800
+    confirm: bool = False
+
+class NetworkIsolationRemoveRequest(BaseModel):
+    ip: str
 
 class SuppressionRequest(BaseModel):
     vector: str
@@ -1161,6 +1263,113 @@ def rollback_remediation(
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Rollback failed"))
     return result
+
+
+# --- Containment API Endpoints ---
+
+@app.get("/api/v1/containment/actions")
+def get_containment_actions(
+    target: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    auth: Dict[str, str] = Depends(require_auditor)
+):
+    """List recorded containment actions (Auditor/Analyst/Operator/Admin)."""
+    actions = storage.get_containment_actions(target=target, status=status)
+    return [a.to_dict() for a in actions]
+
+
+@app.post("/api/v1/containment/terminate-process")
+def api_terminate_process(
+    req: ProcessTerminationRequest,
+    auth: Dict[str, str] = Depends(require_operator)
+):
+    """Terminate target process under safety guards (Operator/Admin)."""
+    try:
+        action = containment_engine.terminate_process(
+            pid=req.pid,
+            reason=req.reason,
+            actor=auth["user"],
+            expected_start_time=req.expected_start_time,
+            confirm=req.confirm
+        )
+        return action.to_dict()
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ProcessLookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/v1/containment/freeze-process")
+def api_freeze_process(
+    req: ProcessFreezeRequest,
+    auth: Dict[str, str] = Depends(require_operator)
+):
+    """Freeze target process via cgroups v2 or SIGSTOP (Operator/Admin)."""
+    try:
+        action = containment_engine.freeze_process(
+            pid=req.pid,
+            reason=req.reason,
+            actor=auth["user"],
+            confirm=req.confirm
+        )
+        return action.to_dict()
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ProcessLookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/v1/containment/thaw-process")
+def api_thaw_process(
+    req: ProcessThawRequest,
+    auth: Dict[str, str] = Depends(require_operator)
+):
+    """Thaw previously frozen process (Operator/Admin)."""
+    try:
+        action = containment_engine.thaw_process(
+            action_id=req.action_id,
+            actor=auth["user"]
+        )
+        return action.to_dict()
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/containment/isolate-network")
+def api_isolate_network(
+    req: NetworkIsolationRequest,
+    auth: Dict[str, str] = Depends(require_admin)
+):
+    """Apply temporary nftables drop rule with timeout against attack IP (Admin only)."""
+    try:
+        action = containment_engine.isolate_network(
+            ip=req.ip,
+            reason=req.reason,
+            timeout_seconds=req.timeout_seconds,
+            actor=auth["user"],
+            confirm=req.confirm
+        )
+        return action.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/v1/containment/remove-network-isolation")
+def api_remove_network_isolation(
+    req: NetworkIsolationRemoveRequest,
+    auth: Dict[str, str] = Depends(require_admin)
+):
+    """Remove nftables drop rule for previously contained IP (Admin only)."""
+    try:
+        action = containment_engine.remove_network_isolation(
+            ip=req.ip,
+            actor=auth["user"]
+        )
+        return action.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/v1/reports/generate")

@@ -4,6 +4,7 @@ Stores serialized models with SHA-256 fingerprinting, versioning, and validation
 """
 
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -102,13 +103,20 @@ class ModelRegistry:
 
         return model_path, metadata
 
-    def load_model(self, model_id: str, verify_hash: bool = True) -> Tuple[Any, ModelMetadata]:
+    def load_model(
+        self,
+        model_id: str,
+        verify_hash: bool = True,
+        evaluation_mode: bool = False
+    ) -> Tuple[Any, ModelMetadata]:
         """
-        Load model and verify SHA-256 hash against metadata card.
-        Raises ValueError if model is corrupted, tampered, or unapproved.
+        Load model and verify SHA-256 hash against metadata card and manifest.json.
+        Raises ValueError if model is corrupted or tampered.
+        Raises PermissionError if model is REVOKED or not APPROVED (unless evaluation_mode).
         """
         model_path = os.path.join(self.registry_dir, f"{model_id}.pkl")
         meta_path = os.path.join(self.metadata_dir, f"{model_id}.json")
+        manifest_path = os.path.join(self.base_dir, "manifest.json")
 
         if not os.path.exists(meta_path):
             raise FileNotFoundError(f"Model metadata not found: {meta_path}")
@@ -122,7 +130,7 @@ class ModelRegistry:
         if metadata.feature_schema != list(FEATURE_NAMES):
             raise ValueError(f"Incompatible feature schema in model {model_id}")
 
-        # 2. Cryptographic integrity check
+        # 2. Cryptographic integrity check against metadata card and manifest.json
         if verify_hash:
             with open(model_path, "rb") as f:
                 actual_hash = hashlib.sha256(f.read()).hexdigest()
@@ -132,11 +140,32 @@ class ModelRegistry:
                     f"Recorded hash: {metadata.sha256_hash[:16]}, actual: {actual_hash[:16]}"
                 )
 
+            # Check against manifest.json if present
+            if os.path.exists(manifest_path):
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as mf:
+                        manifest_data = json.load(mf)
+                    manifest_models = manifest_data.get("models", {})
+                    if model_id in manifest_models:
+                        manifest_hash = manifest_models[model_id].get("sha256")
+                        if manifest_hash and actual_hash != manifest_hash:
+                            raise ValueError(
+                                f"Model manifest checksum mismatch for {model_id}! "
+                                f"Manifest: {manifest_hash[:16]}, actual: {actual_hash[:16]}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+
         # 3. Validation status gate
+        if metadata.validation_status == "REVOKED":
+            raise PermissionError(f"Model {model_id} has been REVOKED and cannot be loaded.")
+
         if metadata.validation_status != "APPROVED":
-            raise PermissionError(
-                f"Model {model_id} cannot be loaded: validation status is '{metadata.validation_status}'"
-            )
+            if not evaluation_mode:
+                raise PermissionError(
+                    f"Model {model_id} cannot be loaded: validation status is '{metadata.validation_status}'. "
+                    f"Only APPROVED models are permitted in production inference."
+                )
 
         # 4. Deserialize
         if HAS_JOBLIB:
@@ -146,3 +175,48 @@ class ModelRegistry:
                 model_obj = pickle.load(f)
 
         return model_obj, metadata
+
+    def revoke_model(self, model_id: str, operator: str = "admin", reason: str = "") -> ModelMetadata:
+        """Revoke trust from a model, preventing further loading or inference."""
+        meta_path = os.path.join(self.metadata_dir, f"{model_id}.json")
+        if not os.path.exists(meta_path):
+            raise FileNotFoundError(f"Model metadata not found: {meta_path}")
+
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = ModelMetadata.from_dict(json.load(f))
+
+        metadata.validation_status = "REVOKED"
+        if not metadata.validation_report:
+            metadata.validation_report = {}
+        metadata.validation_report["revocation"] = {
+            "revoked_by": operator,
+            "reason": reason,
+            "revoked_at_iso": datetime.now(timezone.utc).isoformat()
+        }
+
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata.to_dict(), f, indent=2)
+
+        return metadata
+
+    def approve_model(self, model_id: str, operator: str = "admin") -> ModelMetadata:
+        """Approve model for production inference after validation."""
+        meta_path = os.path.join(self.metadata_dir, f"{model_id}.json")
+        if not os.path.exists(meta_path):
+            raise FileNotFoundError(f"Model metadata not found: {meta_path}")
+
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = ModelMetadata.from_dict(json.load(f))
+
+        metadata.validation_status = "APPROVED"
+        if not metadata.validation_report:
+            metadata.validation_report = {}
+        metadata.validation_report["approval"] = {
+            "approved_by": operator,
+            "approved_at_iso": datetime.now(timezone.utc).isoformat()
+        }
+
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata.to_dict(), f, indent=2)
+
+        return metadata

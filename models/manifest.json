@@ -1,0 +1,46 @@
+{
+  "manifest_version": "1.0",
+  "generated_at": "2026-11-04T18:30:00Z",
+  "models": {
+    "random_forest_privesc_v3_1": {
+      "model_id": "random_forest_privesc_v3_1",
+      "version": "3.1.0",
+      "algorithm": "RandomForestClassifier",
+      "sha256": "8c942e265289e389278c1b5c918c7fd24c7161c767f0eec836c2aaa87a4bc3a1",
+      "status": "APPROVED",
+      "feature_schema_version": "3.1",
+      "dataset_version": "1.0",
+      "metrics": {
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "auc_roc": 1.0
+      }
+    },
+    "isolation_forest_v3_1": {
+      "model_id": "isolation_forest_v3_1",
+      "version": "3.1.0",
+      "algorithm": "IsolationForest",
+      "sha256": "9bde4092c11ddbea52c766b708663d721eff65134b5e5280b793ad7415f6de91",
+      "status": "APPROVED",
+      "feature_schema_version": "3.1",
+      "dataset_version": "1.0",
+      "metrics": {
+        "contamination": 0.05
+      }
+    },
+    "markov_sequence_v3_1": {
+      "model_id": "markov_sequence_v3_1",
+      "version": "3.1.0",
+      "algorithm": "MarkovChain",
+      "sha256": "e5c246cfd7d6a49bfa31813bf06168eb20389eee9f2acd0b54cb38b4854423ae",
+      "status": "APPROVED",
+      "feature_schema_version": "3.1",
+      "dataset_version": "1.0",
+      "metrics": {
+        "transition_coverage": 1.0
+      }
+    }
+  }
+}

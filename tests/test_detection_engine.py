@@ -163,3 +163,65 @@ def test_expected_suid_allowlist_no_incident():
     assert len(incidents) == 0
 
 
+def test_world_writable_elevated_execution_detection():
+    """Verify execution of elevated binary from /tmp or /dev/shm is flagged as critical."""
+    engine = DetectionEngine()
+    evt = UatuEvent(
+        event_id="evt_shm_suid",
+        event_type="SUID_EXECUTION",
+        user="www-data",
+        uid=33,
+        euid=0,
+        pid=7788,
+        exe="/dev/shm/.hidden_suid"
+    )
+    incidents = engine.correlate([evt])
+    assert len(incidents) == 1
+    assert "World-Writable Directory" in incidents[0].title
+    assert incidents[0].severity == Severity.CRITICAL.value
+    assert incidents[0].attribution["world_writable"] is True
+
+
+def test_unexpected_privilege_transition_syscall():
+    """Verify setuid syscall transitioning to root creates critical incident."""
+    engine = DetectionEngine()
+    evt = UatuEvent(
+        event_id="evt_setuid_root",
+        event_type="SETUID_CALL",
+        user="lowpriv",
+        uid=1001,
+        euid=0,
+        pid=9999,
+        syscall="setuid"
+    )
+    incidents = engine.correlate([evt])
+    assert len(incidents) == 1
+    assert "Unexpected Privilege Transition Syscall" in incidents[0].title
+    assert incidents[0].severity == Severity.CRITICAL.value
+
+
+def test_incident_lifecycle_transitions_and_audit():
+    """Verify incident lifecycle transitions enforce valid states and track history."""
+    inc = Incident(title="Test Incident", severity=Severity.HIGH.value)
+    assert inc.status == IncidentStatus.NEW.value
+    assert len(inc.lifecycle_history) == 0
+
+    inc.transition(IncidentStatus.INVESTIGATING, operator="analyst1", rationale="Verifying audit logs")
+    assert inc.status == IncidentStatus.INVESTIGATING.value
+    assert len(inc.lifecycle_history) == 1
+    assert inc.lifecycle_history[0]["from_status"] == IncidentStatus.NEW.value
+    assert inc.lifecycle_history[0]["to_status"] == IncidentStatus.INVESTIGATING.value
+    assert inc.lifecycle_history[0]["operator"] == "analyst1"
+    assert "Verifying audit logs" in inc.lifecycle_history[0]["rationale"]
+
+    # Transition to RESOLVED
+    inc.transition("RESOLVED", operator="lead_sec", rationale="False alarm, authorized test")
+    assert inc.status == IncidentStatus.RESOLVED.value
+    assert len(inc.lifecycle_history) == 2
+
+    # Reject invalid status
+    with pytest.raises(ValueError, match="Invalid incident status"):
+        inc.transition("INVALID_STATUS_CODE", operator="analyst1", rationale="test")
+
+
+

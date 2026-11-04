@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import secrets
 from typing import Dict, List, Any, Optional, Union
 
 from core.models import Finding, Severity, utc_now
@@ -42,11 +43,19 @@ class BaseScanner(ABC):
                     affected_resource: str = "", risk_explanation: str = "",
                     references: Optional[List[str]] = None,
                     confidence: float = 0.90,
-                    detection_method: str = "static_audit") -> Finding:
+                    detection_method: str = "static_audit",
+                    rule_id: str = "",
+                    attack_preconditions: str = "",
+                    validation_procedure: str = "") -> Finding:
         """Construct, record, and return an evidence-backed Finding"""
         evidence_dict = evidence if isinstance(evidence, dict) else {'raw_evidence': str(evidence)}
 
+        inferred_rule = rule_id or f"RULE_{self.vector_name.replace('/', '_').upper()}"
+        val_proc = validation_procedure or f"Run manual verification: ls -la {affected_resource or evidence_dict.get('path', '')}"
+
         finding = Finding(
+            finding_id=f"fnd_{self.vector_name[:3].lower()}_{secrets.token_hex(6)}",
+            rule_id=inferred_rule,
             vector=self.vector_name,
             severity=severity,
             confidence=confidence,
@@ -55,8 +64,10 @@ class BaseScanner(ABC):
             affected_resource=affected_resource or str(evidence_dict.get('path', '')),
             evidence=evidence_dict,
             detection_method=detection_method,
+            attack_preconditions=attack_preconditions,
             risk_explanation=risk_explanation or description,
             remediation=remediation,
+            validation_procedure=val_proc,
             references=references or [],
             timestamp=utc_now()
         )

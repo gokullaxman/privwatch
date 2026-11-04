@@ -20,7 +20,7 @@ from typing import List, Optional, Dict, Any, Generator
 from core.command_runner import CommandRunner
 from core.event_schema import (
     UatuEvent, ProvenanceClass, DataOrigin, CollectionStatus,
-    CollectionMethod, EventSeverity
+    CollectionMethod, EventSeverity, SourceClassification
 )
 from core.event_bus import EventBus
 from core.storage import StorageEngine
@@ -256,6 +256,7 @@ class AuditLogReader:
             },
             provenance_class=ProvenanceClass.OBSERVED,
             data_origin=DataOrigin.LIVE_TELEMETRY,
+            source_classification=SourceClassification.LIVE_AUDITD,
             confidence=0.98,
             collection_status=CollectionStatus.SUCCESS
         )
@@ -344,6 +345,7 @@ class AuditLogReader:
             },
             provenance_class=ProvenanceClass.OBSERVED,
             data_origin=DataOrigin.LIVE_TELEMETRY,
+            source_classification=SourceClassification.LIVE_AUDITD,
             confidence=0.98,
             collection_status=CollectionStatus.SUCCESS
         )
@@ -464,6 +466,7 @@ class AuthLogReader:
                 evidence={"raw_line": line, "action": "AUTH_FAILURE"},
                 provenance_class=ProvenanceClass.OBSERVED,
                 data_origin=DataOrigin.LIVE_TELEMETRY,
+                source_classification=SourceClassification.LIVE_AUTH_LOG,
                 confidence=1.0
             )
 
@@ -487,6 +490,7 @@ class AuthLogReader:
                 evidence={"raw_line": line, "command": cmd, "target_user": "root"},
                 provenance_class=ProvenanceClass.OBSERVED,
                 data_origin=DataOrigin.LIVE_TELEMETRY,
+                source_classification=SourceClassification.LIVE_AUTH_LOG,
                 confidence=1.0
             )
 
@@ -508,6 +512,7 @@ class AuthLogReader:
                 evidence={"raw_line": line, "remote_ip": r_ip},
                 provenance_class=ProvenanceClass.OBSERVED,
                 data_origin=DataOrigin.LIVE_TELEMETRY,
+                source_classification=SourceClassification.LIVE_AUTH_LOG,
                 confidence=1.0
             )
 

@@ -1,0 +1,23 @@
+[Unit]
+Description=UATU Linux Edition - Privilege Escalation Detection & Disruption Service
+Documentation=https://github.com/gokullaxman/privwatch
+After=network.target auditd.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/uatu
+ExecStart=/opt/uatu/uatu.sh watch
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+CapabilityBoundingSet=CAP_AUDIT_READ CAP_AUDIT_CONTROL CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_NET_ADMIN CAP_SYS_PTRACE
+AmbientCapabilities=CAP_AUDIT_READ CAP_AUDIT_CONTROL CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_NET_ADMIN CAP_SYS_PTRACE
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/var/lib/uatu /var/log/uatu /tmp
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

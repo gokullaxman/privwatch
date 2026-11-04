@@ -79,14 +79,46 @@ UATU provides a unified executable runner (`./uatu.sh`):
 
 | Command | Description |
 | :--- | :--- |
+| `./uatu.sh doctor` | Run comprehensive system and environment diagnostics (10 categories). |
+| `./uatu.sh status` | Display posture score, active findings count, and telemetry source health. |
 | `./uatu.sh scan` | Enumerate 9 privilege escalation vectors and map attack paths (`[CONFIGURATION_ONLY]`). |
-| `./uatu.sh watch` | Ingest live events from Linux auditd / auth log and correlate incidents in real time. |
-| `./uatu.sh serve` | Launch the FastAPI dark-theme dashboard on `127.0.0.1:8443`. |
+| `./uatu.sh watch [--verbose]` | Ingest live events from Linux auditd / auth log and correlate incidents in real time. |
+| `./uatu.sh serve [--port=8443]` | Launch the FastAPI dark-theme dashboard and RBAC REST API on `127.0.0.1:8443`. |
 | `./uatu.sh remediate <finding_id>` | Inspect and dry-run least-privilege permission correction for a finding. |
 | `./uatu.sh remediate <finding_id> --apply` | Apply validated permission fix and record rollback snapshot. |
 | `./uatu.sh rollback <finding_id>` | Exact atomic rollback to restore pre-remediation permissions. |
 | `./uatu.sh report <item_id> --format=pdf` | Generate ReportLab PDF report for a finding or incident. |
 | `./uatu.sh report <item_id> --format=json` | Export machine-readable JSON report with evidence hash. |
+| `./uatu.sh test` | Execute automated test suite across all modules. |
+| `./uatu.sh demo [--synthetic\|--live]` | Run structured demonstration (Scenario A synthetic or Scenario B live). |
+| `./uatu.sh logs [--limit=N]` | Display immutable cryptographically hash-chained audit trail entries. |
+| `./uatu.sh version` | Show UATU product version, architecture, and platform details. |
+| `./uatu.sh install` | Deploy system auditd rules, secure directories, and systemd service (root). |
+| `./uatu.sh uninstall` | Clean removal of services, audit rules, and state with confirmation (root). |
+
+---
+
+## 📚 Documentation Suite
+
+Comprehensive documentation is available in the [`docs/`](docs/) directory:
+
+- [System Architecture](docs/ARCHITECTURE.md) — Subsystem specification and data flow
+- [Installation Guide](docs/INSTALLATION.md) — Deployment instructions for Debian / Kali Linux
+- [Configuration Reference](docs/CONFIGURATION.md) — Environment variables, directories, and policies
+- [Telemetry Pipeline](docs/TELEMETRY.md) — Audit netlink, journald, and provenance invariants
+- [Detection Engine](docs/DETECTION_ENGINE.md) — Correlation rules and incident state machine
+- [Attack Path Engine](docs/ATTACK_PATH_ENGINE.md) — Directed graph modeling and bottleneck disruption
+- [Response & Containment](docs/RESPONSE_ENGINE.md) — PID checks, cgroups v2 freeze, and nftables containment
+- [Machine Learning Governance](docs/ML_GOVERNANCE.md) — Model registry, manifest checking, and trust states
+- [API Security & RBAC](docs/API_SECURITY.md) — 5-tier access control, tokens, and browser headers
+- [STRIDE Threat Model](docs/THREAT_MODEL.md) — System security boundaries and residual risk mitigations
+- [Known Limitations](docs/KNOWN_LIMITATIONS.md) — Documented constraints and technical boundaries
+- [Demonstration Guide](docs/DEMONSTRATION_GUIDE.md) — Step-by-step evaluator walkthrough
+- [Demonstration Test Matrix](docs/DEMONSTRATION_TEST_MATRIX.md) — Capability mapping to demonstration steps
+- [Expected Results](docs/DEMONSTRATION_EXPECTED_RESULTS.md) — Reference terminal logs and verification data
+- [Final Engineering Audit](docs/FINAL_ENGINEERING_AUDIT.md) — Subsystem inventory and compliance review
+- [Final Defect Register](docs/FINAL_DEFECT_REGISTER.md) — 10 cataloged defects and rectification log
+- [Final Validation Report](docs/FINAL_VALIDATION_REPORT.md) — Verification matrix and gate sign-off
 
 ---
 

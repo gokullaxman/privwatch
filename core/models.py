@@ -25,8 +25,11 @@ class Severity(str, Enum):
 
 class IncidentStatus(str, Enum):
     NEW = "NEW"
-    ACKNOWLEDGED = "ACKNOWLEDGED"
+    TRIAGED = "TRIAGED"
+    ACKNOWLEDGED = "TRIAGED"
     INVESTIGATING = "INVESTIGATING"
+    CONTAINMENT_PENDING = "CONTAINMENT_PENDING"
+    CONTAINED = "CONTAINED"
     RESOLVED = "RESOLVED"
     FALSE_POSITIVE = "FALSE_POSITIVE"
 
@@ -36,22 +39,40 @@ class NodeType(str, Enum):
     GROUP = "GROUP"
     PROCESS = "PROCESS"
     FILE = "FILE"
-    CAPABILITY = "CAPABILITY"
+    DIRECTORY = "DIRECTORY"
     SERVICE = "SERVICE"
-    SOCKET = "SOCKET"
-    SUDO_RULE = "SUDO_RULE"
+    SYSTEMD_UNIT = "SYSTEMD_UNIT"
     CRON_JOB = "CRON_JOB"
+    SUDO_RULE = "SUDO_RULE"
+    CAPABILITY = "CAPABILITY"
+    HOST = "HOST"
+    CONTAINER = "CONTAINER"
+    SOCKET = "SOCKET"
 
 
 class EdgeType(str, Enum):
-    OWNS = "OWNS"
     MEMBER_OF = "MEMBER_OF"
-    CAN_EXECUTE = "CAN_EXECUTE"
+    OWNS = "OWNS"
     CAN_WRITE = "CAN_WRITE"
+    CAN_EXECUTE = "CAN_EXECUTE"
+    EXECUTED_BY = "EXECUTED_BY"
+    RUNS_AS = "RUNS_AS"
+    CAN_MODIFY = "CAN_MODIFY"
+    CAN_IMPERSONATE = "CAN_IMPERSONATE"
+    HAS_CAPABILITY = "HAS_CAPABILITY"
+    DEPENDS_ON = "DEPENDS_ON"
+    CONNECTS_TO = "CONNECTS_TO"
     ESCALATES_TO = "ESCALATES_TO"
     SPAWNED = "SPAWNED"
     HOLDS_CAPABILITY = "HOLDS_CAPABILITY"
     LISTENS_ON = "LISTENS_ON"
+
+
+class EdgeClass(str, Enum):
+    OBSERVED = "OBSERVED"
+    CONFIGURATION_DERIVED = "CONFIGURATION_DERIVED"
+    INFERRED = "INFERRED"
+    HYPOTHETICAL = "HYPOTHETICAL"
 
 
 class PolicyMode(str, Enum):
@@ -68,15 +89,30 @@ class PolicyAction(str, Enum):
     KILL = "KILL"
 
 
+class ContainmentMode(str, Enum):
+    OBSERVE_ONLY = "OBSERVE_ONLY"
+    ALERT_ONLY = "ALERT_ONLY"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    AUTHORIZED_AUTOMATIC = "AUTHORIZED_AUTOMATIC"
+
+
 class ContainmentActionType(str, Enum):
     KILL_PROCESS = "KILL_PROCESS"
+    PROCESS_TERMINATION = "PROCESS_TERMINATION"
+    PROCESS_FREEZE = "PROCESS_FREEZE"
+    PROCESS_THAW = "PROCESS_THAW"
+    PROCESS_ISOLATION = "PROCESS_ISOLATION"
+    USER_SESSION_TERMINATION = "USER_SESSION_TERMINATION"
+    NETWORK_CONTAINMENT = "NETWORK_CONTAINMENT"
     ISOLATE_NETWORK = "ISOLATE_NETWORK"
     REVOKE_PRIVILEGE = "REVOKE_PRIVILEGE"
     QUARANTINE_FILE = "QUARANTINE_FILE"
+    CREDENTIAL_REVOCATION_FLAG = "CREDENTIAL_REVOCATION_FLAG"
 
 
 class ContainmentStatus(str, Enum):
     REQUESTED = "REQUESTED"
+    PLAN_GENERATED = "PLAN_GENERATED"
     EXECUTED = "EXECUTED"
     FAILED = "FAILED"
     ROLLED_BACK = "ROLLED_BACK"
@@ -172,6 +208,7 @@ class Finding:
     Every finding must include real evidence, detection methodology, and defensive remediation.
     """
     finding_id: str = field(default_factory=lambda: f"fnd_{uuid.uuid4().hex[:16]}")
+    rule_id: str = "GENERIC_RULE"
     vector: str = "GENERIC"  # e.g., 'SUID/SGID', 'SUDO', 'CAPABILITIES', 'CRON', 'KERNEL'
     severity: str = Severity.MEDIUM.value
     confidence: float = 0.90
@@ -180,8 +217,10 @@ class Finding:
     affected_resource: str = ""
     evidence: Dict[str, Any] = field(default_factory=dict)
     detection_method: str = "static_audit"
+    attack_preconditions: str = ""
     risk_explanation: str = ""
     remediation: str = ""
+    validation_procedure: str = ""
     references: List[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=utc_now)
     is_test_fixture: bool = False
@@ -227,7 +266,35 @@ class Incident:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     notes: List[Dict[str, Any]] = field(default_factory=list)
+    lifecycle_history: List[Dict[str, Any]] = field(default_factory=list)
     is_test_fixture: bool = False
+
+    def transition(self, new_status: Union[IncidentStatus, str], operator: str, rationale: str) -> None:
+        """
+        Transition incident lifecycle status with audit logging.
+        Validates target status and records operator, rationale, timestamp.
+        """
+        target = new_status.value if isinstance(new_status, IncidentStatus) else str(new_status).upper()
+        valid_statuses = {s.value for s in IncidentStatus}
+        if target not in valid_statuses:
+            raise ValueError(f"Invalid incident status '{target}'. Must be one of: {sorted(valid_statuses)}")
+
+        old_status = self.status
+        self.status = target
+        self.updated_at = utc_now()
+        entry = {
+            "from_status": old_status,
+            "to_status": target,
+            "operator": operator,
+            "rationale": rationale,
+            "timestamp": format_iso(self.updated_at)
+        }
+        self.lifecycle_history.append(entry)
+        self.notes.append({
+            "author": operator,
+            "text": f"Status transition {old_status} -> {target}: {rationale}",
+            "created_at": format_iso(self.updated_at)
+        })
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert incident to dictionary"""
@@ -406,6 +473,7 @@ class AttackEdge:
     source_node_id: str
     target_node_id: str
     relationship_type: str
+    edge_class: str = "CONFIGURATION_DERIVED"
     technique_id: str = ""
     confidence: float = 1.0
     cost: float = 1.0
@@ -417,6 +485,7 @@ class AttackEdge:
             "source_node_id": self.source_node_id,
             "target_node_id": self.target_node_id,
             "relationship_type": self.relationship_type,
+            "edge_class": self.edge_class,
             "technique_id": self.technique_id,
             "confidence": self.confidence,
             "cost": self.cost,

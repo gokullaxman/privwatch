@@ -23,6 +23,17 @@ class ProvenanceClass(str, Enum):
     ANALYST = "ANALYST"                # Manually entered or annotated by a human analyst
 
 
+class SourceClassification(str, Enum):
+    """Explicit classifications for event provenance and ingestion channels."""
+    LIVE_AUDITD = "LIVE_AUDITD"
+    LIVE_AUTH_LOG = "LIVE_AUTH_LOG"
+    LIVE_PROCESS_OBSERVATION = "LIVE_PROCESS_OBSERVATION"
+    SYNTHETIC_TEST = "SYNTHETIC_TEST"
+    REPLAYED_EVENT = "REPLAYED_EVENT"
+    IMPORTED_EVENT = "IMPORTED_EVENT"
+    UNKNOWN_SOURCE = "UNKNOWN_SOURCE"
+
+
 class DataOrigin(str, Enum):
     LIVE_TELEMETRY = "LIVE_TELEMETRY"  # Captured live from running host
     HISTORICAL_LOG = "HISTORICAL_LOG"  # Parsed from historical system log files
@@ -126,6 +137,7 @@ class UatuEvent:
     audit_event_id: Optional[str] = None
     exe: Optional[str] = None
     command: Optional[str] = None
+    syscall: Optional[str] = None
     user: Optional[str] = None
     evidence: Dict[str, Any] = field(default_factory=dict)
     evidence_ref: Optional[str] = None
@@ -133,13 +145,28 @@ class UatuEvent:
     data_origin: Union[DataOrigin, str] = DataOrigin.LIVE_TELEMETRY
     confidence: Optional[float] = 1.0
     collection_status: Union[CollectionStatus, str] = CollectionStatus.SUCCESS
+    source_classification: Union[SourceClassification, str] = SourceClassification.UNKNOWN_SOURCE
+    collection_timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    source_record_id: Optional[str] = None
     integrity_hash: Optional[str] = None
+
+    def is_synthetic(self) -> bool:
+        """Return True if this event is synthetic test data, never live telemetry."""
+        return (
+            self.data_origin == DataOrigin.TEST_FIXTURE or
+            self.source_classification == SourceClassification.SYNTHETIC_TEST
+        )
 
     def __post_init__(self):
         # 1. Enforce timezone-aware UTC timestamp
         if self.timestamp.tzinfo is None:
             raise ValueError(f"Naive datetime rejected for timestamp: '{self.timestamp}'. Must be timezone-aware UTC.")
         self.timestamp = self.timestamp.astimezone(timezone.utc)
+
+        if self.collection_timestamp.tzinfo is None:
+            self.collection_timestamp = self.collection_timestamp.replace(tzinfo=timezone.utc)
+        else:
+            self.collection_timestamp = self.collection_timestamp.astimezone(timezone.utc)
 
         if self.process_start_time is not None:
             if self.process_start_time.tzinfo is None:
@@ -185,6 +212,41 @@ class UatuEvent:
             except ValueError:
                 self.severity = EventSeverity.INFO
 
+        if isinstance(self.source_classification, str):
+            try:
+                self.source_classification = SourceClassification(self.source_classification.upper())
+            except ValueError:
+                self.source_classification = SourceClassification.UNKNOWN_SOURCE
+
+        # Infer source classification when UNKNOWN_SOURCE
+        if self.source_classification == SourceClassification.UNKNOWN_SOURCE:
+            if self.data_origin == DataOrigin.TEST_FIXTURE:
+                self.source_classification = SourceClassification.SYNTHETIC_TEST
+            elif self.collection_method in (CollectionMethod.AUDITD_NETLINK, CollectionMethod.AUDITD_LOG):
+                self.source_classification = SourceClassification.LIVE_AUDITD
+            elif self.collection_method in (CollectionMethod.AUTH_LOG, CollectionMethod.SECURE_LOG, CollectionMethod.SYSTEMD_JOURNAL):
+                self.source_classification = SourceClassification.LIVE_AUTH_LOG
+            elif self.collection_method == CollectionMethod.PROCFS:
+                self.source_classification = SourceClassification.LIVE_PROCESS_OBSERVATION
+
+        # Strict invariant: Never allow synthetic events to masquerade as live host telemetry
+        if self.data_origin == DataOrigin.TEST_FIXTURE and self.source_classification in (
+            SourceClassification.LIVE_AUDITD,
+            SourceClassification.LIVE_AUTH_LOG,
+            SourceClassification.LIVE_PROCESS_OBSERVATION
+        ):
+            raise ValueError(
+                f"Provenance Violation: Synthetic test event {self.event_id} cannot be tagged with live classification: {self.source_classification}"
+            )
+        if self.source_classification == SourceClassification.SYNTHETIC_TEST and self.data_origin == DataOrigin.LIVE_TELEMETRY:
+            raise ValueError(
+                f"Provenance Violation: Synthetic test event {self.event_id} cannot have data_origin=LIVE_TELEMETRY"
+            )
+
+        # Sync source_record_id from audit_event_id if available
+        if not self.source_record_id and self.audit_event_id:
+            self.source_record_id = self.audit_event_id
+
         # 4. Compute deterministic integrity hash if not provided
         if not self.integrity_hash:
             self.integrity_hash = self.compute_hash()
@@ -210,11 +272,14 @@ class UatuEvent:
             "ppid": self.ppid,
             "exe": self.exe,
             "command": self.command,
+            "syscall": self.syscall,
             "user": self.user,
             "evidence": self.evidence,
             "evidence_ref": self.evidence_ref,
             "provenance_class": self.provenance_class.value if isinstance(self.provenance_class, Enum) else str(self.provenance_class),
             "data_origin": self.data_origin.value if isinstance(self.data_origin, Enum) else str(self.data_origin),
+            "source_classification": self.source_classification.value if isinstance(self.source_classification, Enum) else str(self.source_classification),
+            "source_record_id": self.source_record_id,
             "confidence": self.confidence,
             "collection_status": self.collection_status.value if isinstance(self.collection_status, Enum) else str(self.collection_status)
         }
@@ -233,10 +298,13 @@ class UatuEvent:
         return {
             "event_id": self.event_id,
             "timestamp": format_iso_utc(self.timestamp),
+            "collection_timestamp": format_iso_utc(self.collection_timestamp),
             "host_id": self.host_id,
             "hostname": self.hostname,
             "source": self.source,
             "source_event_id": self.source_event_id,
+            "source_record_id": self.source_record_id,
+            "source_classification": self.source_classification.value if isinstance(self.source_classification, Enum) else str(self.source_classification),
             "collection_method": self.collection_method.value if isinstance(self.collection_method, Enum) else str(self.collection_method),
             "event_type": self.event_type,
             "severity": self.severity.value if isinstance(self.severity, Enum) else str(self.severity),
@@ -252,6 +320,7 @@ class UatuEvent:
             "audit_event_id": self.audit_event_id,
             "exe": self.exe,
             "command": self.command,
+            "syscall": self.syscall,
             "user": self.user,
             "evidence": self.evidence,
             "evidence_ref": self.evidence_ref,
@@ -268,6 +337,8 @@ class UatuEvent:
         d = dict(data)
         if isinstance(d.get("timestamp"), str):
             d["timestamp"] = parse_iso_utc(d["timestamp"]) or datetime.now(timezone.utc)
+        if isinstance(d.get("collection_timestamp"), str):
+            d["collection_timestamp"] = parse_iso_utc(d["collection_timestamp"]) or datetime.now(timezone.utc)
         if isinstance(d.get("process_start_time"), str):
             d["process_start_time"] = parse_iso_utc(d["process_start_time"])
         return cls(**d)

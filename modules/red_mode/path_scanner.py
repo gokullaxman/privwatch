@@ -74,6 +74,7 @@ class PathScanner(BaseScanner):
     def _audit_path_string(self, path_str: str, source_name: str):
         """Analyze individual directory entries in root/service PATH string."""
         entries = path_str.split(":")
+        seen_entries = set()
 
         for idx, entry in enumerate(entries):
             entry_clean = entry.strip()
@@ -89,17 +90,31 @@ class PathScanner(BaseScanner):
                     detection_method="path_order_analysis",
                     risk_explanation="Commands executed in a directory containing an attacker-placed binary of the same name will execute the malicious binary instead of the system binary.",
                     remediation="Remove '.' and relative components from system PATH.",
-                    confidence=1.0
+                    confidence=1.0,
+                    rule_id="RULE_PATH_RELATIVE_DIR",
+                    attack_preconditions="Root or service resolves commands with relative directory present in search PATH",
+                    validation_procedure=f"Inspect system PATH configuration: echo '{path_str}'"
                 )
                 continue
 
+            norm_entry = os.path.normpath(entry_clean)
+
+            # Deduplicate entries within the same evaluation
+            if norm_entry in seen_entries:
+                continue
+            seen_entries.add(norm_entry)
+
+            # Skip virtual / kernel pseudo-filesystems
+            if any(norm_entry.startswith(v) for v in ("/proc", "/sys", "/dev", "/run")):
+                continue
+
             # Must exist and be a directory (root-reachable)
-            if not os.path.exists(entry_clean) or not os.path.isdir(entry_clean):
+            if not os.path.exists(norm_entry) or not os.path.isdir(norm_entry):
                 continue
 
             # Require group-writable (with non-root GID) OR other-writable
             try:
-                st = os.stat(entry_clean)
+                st = os.stat(norm_entry)
                 mode = st.st_mode
                 gid = st.st_gid
                 is_group_or_other_writable = bool(mode & stat.S_IWOTH) or bool((mode & stat.S_IWGRP) and gid != 0)
@@ -119,20 +134,23 @@ class PathScanner(BaseScanner):
 
             self.add_finding(
                 severity=sev,
-                title=f"Writable Directory in PATH: {entry_clean}",
-                description=f"Directory '{entry_clean}' in {source_name} is group/other-writable by non-root users. "
+                title=f"Writable Directory in PATH: {norm_entry}",
+                description=f"Directory '{norm_entry}' in {source_name} is group/other-writable by non-root users. "
                             f"{'It precedes standard system binary directories.' if is_prioritized else ''}",
-                affected_resource=entry_clean,
+                affected_resource=norm_entry,
                 evidence={
-                    'path_entry': entry_clean,
+                    'path_entry': norm_entry,
                     'position': idx,
                     'precedes_system_dirs': is_prioritized,
-                    'stat': get_file_stat_metadata(entry_clean)
+                    'stat': get_file_stat_metadata(norm_entry)
                 },
                 detection_method="path_write_permission_audit",
                 risk_explanation="An attacker can place a malicious trojan binary in this writable directory, which will be executed by root/services when resolving commands.",
-                remediation=f"Remove write permissions from non-root users: chmod 755 {entry_clean} or remove entry from PATH.",
-                confidence=1.0
+                remediation=f"Remove write permissions from non-root users: chmod 755 {norm_entry} or remove entry from PATH.",
+                confidence=1.0,
+                rule_id="RULE_PATH_WRITABLE_DIR",
+                attack_preconditions="Attacker has write access to directory traversed by root prior to standard system binary locations",
+                validation_procedure=f"ls -ld {norm_entry}"
             )
 
     def _audit_system_profile(self, config_path: str):

@@ -180,3 +180,50 @@ def test_load_api_token_generates_random_token_and_sets_0600(temp_dir, monkeypat
     assert len(token) >= 32
     assert token_file.exists()
     assert token_file.read_text().strip() == token
+
+
+def test_security_headers_injected_on_responses(client):
+    """Verify strict security headers are injected on HTTP responses."""
+    resp = client.get("/api/v1/health")
+    assert resp.status_code == 200
+    assert "Content-Security-Policy" in resp.headers
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["X-Frame-Options"] == "DENY"
+
+
+def test_rbac_privilege_enforcement(client):
+    """Verify role-based access control blocks lower-privileged tokens from admin actions."""
+    ro_headers = {"X-API-Key": "readonly-token"}
+
+    # Read-only token can access health
+    resp = client.get("/api/v1/health")
+    assert resp.status_code == 200
+
+    # Read-only token blocked from administrative suppression endpoint with 403 Forbidden
+    payload = {"vector": "SUID", "pattern": "/test", "reason": "test"}
+    resp = client.post("/api/v1/suppression", json=payload, headers=ro_headers)
+    assert resp.status_code == 403
+    assert "Insufficient privileges" in resp.json()["detail"] or "Forbidden" in resp.json()["detail"]
+
+    # Read-only token blocked from admin network isolation
+    net_payload = {"ip": "198.51.100.5", "reason": "c2"}
+    resp = client.post("/api/v1/containment/isolate-network", json=net_payload, headers=ro_headers)
+    assert resp.status_code == 403
+
+
+def test_containment_api_routes(client, admin_headers):
+    """Verify containment endpoints accept valid requests and enforce validation."""
+    # List actions
+    resp = client.get("/api/v1/containment/actions", headers=admin_headers)
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+    # Process termination rejected for protected PID 1
+    resp = client.post(
+        "/api/v1/containment/terminate-process",
+        json={"pid": 1, "reason": "test"},
+        headers=admin_headers
+    )
+    assert resp.status_code == 400
+    assert "protected PID 1" in resp.json()["detail"]
+

@@ -181,10 +181,37 @@ class DetectionEngine:
                     ))
                     failure_events.clear()
 
+            elif ev_type in ("SUID_EXECUTION", "SETUID_CALL", "SETREUID_CALL", "SETRESUID_CALL", "PRIVILEGE_TRANSITION"):
+                recent_failures = [f for f in failure_events if (ts - f.timestamp).total_seconds() <= self.window_seconds]
+                if recent_failures:
+                    ordered_ids = [f.event_id for f in recent_failures] + [e.event_id]
+                    key = ("RULE_MULTI_STAGE_ESCALATION_SEQUENCE", pid, serial)
+                    incidents.append((
+                        key,
+                        Incident(
+                            title=f"Multi-Stage Attack Sequence: {user}",
+                            severity=Severity.CRITICAL.value,
+                            confidence=0.98,
+                            hypothesis=(
+                                f"User '{user}' accumulated {len(recent_failures)} authentication failures, "
+                                f"followed by privilege escalation action '{ev_type}'."
+                            ),
+                            attribution={
+                                "user": user,
+                                "pid": pid,
+                                "audit_serial": serial,
+                                "trigger_event": ev_type,
+                                "failure_count": len(recent_failures)
+                            },
+                            event_ids=ordered_ids,
+                            status=IncidentStatus.NEW.value
+                        )
+                    ))
+
         return incidents
 
     def _evaluate_standalone_events(self, events: List[Any]) -> List[Tuple[Tuple[str, Optional[int], Optional[str]], Incident]]:
-        """Evaluate SUID execution with euid!=uid and watched file modifications."""
+        """Evaluate SUID execution with euid!=uid, watched file modifications, and privilege transitions."""
         incidents: List[Tuple[Tuple[str, Optional[int], Optional[str]], Incident]] = []
 
         for e in events:
@@ -196,27 +223,31 @@ class DetectionEngine:
             # Rule 3: SUID execution where euid != uid
             uid = getattr(e, "uid", None)
             euid = getattr(e, "euid", None)
-            if ev_type == "SUID_EXECUTION" or (euid is not None and uid is not None and euid == 0 and uid != 0):
-                exe = getattr(e, "exe", "") or getattr(e, "command", "unknown")
-                binary_name = os.path.basename(exe)
+            exe = getattr(e, "exe", "") or getattr(e, "command", "") or "unknown"
+            binary_name = os.path.basename(exe)
+            is_world_writable = any(exe.startswith(p) for p in ("/tmp/", "/var/tmp/", "/dev/shm/"))
 
-                # Allowlist expected standard SUID binaries (sudo, su, passwd, mount, ping, fusermount)
-                if binary_name in EXPECTED_SUID_BINARIES:
-                    continue
+            is_syscall_transition = ev_type in ("SETUID_CALL", "SETREUID_CALL", "SETRESUID_CALL", "PRIVILEGE_TRANSITION")
 
-                key = ("RULE_SUID_EXECUTION", pid, serial)
-                incidents.append((
-                    key,
-                    Incident(
-                        title=f"SUID Privilege Elevation: {exe}",
-                        severity=Severity.HIGH.value,
-                        confidence=0.95,
-                        hypothesis=f"Process '{exe}' (PID {pid}) executed with effective UID 0 (root) by non-root user '{user}' (UID {uid}).",
-                        attribution={"user": user, "uid": uid, "euid": euid, "pid": pid, "audit_serial": serial, "exe": exe},
-                        event_ids=[e.event_id],
-                        status=IncidentStatus.NEW.value
-                    )
-                ))
+            if not is_syscall_transition and (ev_type == "SUID_EXECUTION" or (euid is not None and uid is not None and euid == 0 and uid != 0)):
+                # Allowlist expected standard SUID binaries unless executing from world-writable location
+                if binary_name in EXPECTED_SUID_BINARIES and not is_world_writable:
+                    pass
+                else:
+                    title = f"Execution of Elevated Binary from World-Writable Directory: {exe}" if is_world_writable else f"SUID Privilege Elevation: {exe}"
+                    key = ("RULE_SUID_EXECUTION", pid, serial)
+                    incidents.append((
+                        key,
+                        Incident(
+                            title=title,
+                            severity=Severity.CRITICAL.value if is_world_writable else Severity.HIGH.value,
+                            confidence=0.98 if is_world_writable else 0.95,
+                            hypothesis=f"Process '{exe}' (PID {pid}) executed with effective UID 0 (root) by non-root user '{user}' (UID {uid}).",
+                            attribution={"user": user, "uid": uid, "euid": euid, "pid": pid, "audit_serial": serial, "exe": exe, "world_writable": is_world_writable},
+                            event_ids=[e.event_id],
+                            status=IncidentStatus.NEW.value
+                        )
+                    ))
 
             # Rule 4: Edits to watched authentication and policy files
             if ev_type in ("WATCHED_FILE_EDIT_SUDOERS", "WATCHED_FILE_EDIT_PASSWD", "WATCHED_FILE_EDIT_SHADOW"):
@@ -235,4 +266,62 @@ class DetectionEngine:
                     )
                 ))
 
+            # Rule 5: Unexpected Syscall Privilege Transition (setuid family)
+            syscall = getattr(e, "syscall", "") or (e.evidence.get("syscall") if hasattr(e, "evidence") and isinstance(e.evidence, dict) else "")
+            if ev_type in ("SETUID_CALL", "SETREUID_CALL", "SETRESUID_CALL", "PRIVILEGE_TRANSITION") or (syscall in ("setuid", "setreuid", "setresuid") and euid == 0 and uid != 0):
+                key = ("RULE_UNEXPECTED_PRIVILEGE_TRANSITION", pid, serial)
+                incidents.append((
+                    key,
+                    Incident(
+                        title=f"Unexpected Privilege Transition Syscall to Root: {user}",
+                        severity=Severity.CRITICAL.value,
+                        confidence=0.96,
+                        hypothesis=f"Process (PID {pid}) invoked '{syscall or ev_type}' transitioning effective UID from {uid} to 0.",
+                        attribution={"user": user, "uid": uid, "euid": euid, "pid": pid, "syscall": syscall or ev_type, "audit_serial": serial},
+                        event_ids=[e.event_id],
+                        status=IncidentStatus.NEW.value
+                    )
+                ))
+
+            # Rule 6: Privilege elevation attribute or capability modification on disk
+            if ev_type in ("SUID_FILE_CREATED", "CHMOD_SETUID", "FILE_CAPABILITY_ADDED"):
+                target_file = getattr(e, "target_file", "") or (e.evidence.get("path") if hasattr(e, "evidence") and isinstance(e.evidence, dict) else "unknown")
+                key = ("RULE_PRIVILEGE_MECHANISM_MODIFICATION", pid, serial)
+                incidents.append((
+                    key,
+                    Incident(
+                        title=f"Suspicious Privilege Elevation Mechanism Modification: {target_file}",
+                        severity=Severity.CRITICAL.value,
+                        confidence=0.97,
+                        hypothesis=f"Privilege elevation mechanism modified on '{target_file}' by user '{user}' (PID {pid}).",
+                        attribution={"user": user, "target_file": target_file, "pid": pid, "audit_serial": serial},
+                        event_ids=[e.event_id],
+                        status=IncidentStatus.NEW.value
+                    )
+                ))
+
         return incidents
+
+    def transition_incident(
+        self,
+        incident_id: str,
+        new_status: Union[IncidentStatus, str],
+        operator: str,
+        rationale: str
+    ) -> Optional[Incident]:
+        """Transition incident lifecycle state and persist to storage."""
+        if not self.storage:
+            return None
+        incidents = self.storage.get_incidents()
+        target_inc = next((i for i in incidents if i.incident_id == incident_id), None)
+        if not target_inc:
+            return None
+
+        target_inc.transition(new_status, operator=operator, rationale=rationale)
+        self.storage.update_incident_status(
+            incident_id=incident_id,
+            new_status=target_inc.status,
+            operator=operator,
+            rationale=rationale
+        )
+        return target_inc

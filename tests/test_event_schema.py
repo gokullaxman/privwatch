@@ -129,3 +129,44 @@ def test_event_round_trip_serialization():
     assert reconstructed.evidence == {"capability": "CAP_SETUID"}
     assert reconstructed.verify_integrity() is True
 
+
+def test_synthetic_events_cannot_be_marked_live():
+    """Verify that synthetic test fixtures can never be classified as live host telemetry."""
+    from core.event_schema import SourceClassification
+
+    # 1. Reject synthetic fixture with live source classification
+    with pytest.raises(ValueError, match="Provenance Violation"):
+        UatuEvent(
+            source="auditd",
+            collection_method=CollectionMethod.AUDITD_LOG,
+            data_origin=DataOrigin.TEST_FIXTURE,
+            source_classification=SourceClassification.LIVE_AUDITD
+        )
+
+    # 2. Reject synthetic classification with LIVE_TELEMETRY data origin
+    with pytest.raises(ValueError, match="Provenance Violation"):
+        UatuEvent(
+            source="auditd",
+            collection_method=CollectionMethod.AUDITD_LOG,
+            data_origin=DataOrigin.LIVE_TELEMETRY,
+            source_classification=SourceClassification.SYNTHETIC_TEST
+        )
+
+    # 3. Legitimate synthetic test fixture works and reports is_synthetic() == True
+    synthetic = UatuEvent(
+        source="test_harness",
+        collection_method=CollectionMethod.UNKNOWN,
+        data_origin=DataOrigin.TEST_FIXTURE,
+        source_classification=SourceClassification.SYNTHETIC_TEST
+    )
+    assert synthetic.is_synthetic() is True
+
+    # 4. Legitimate live telemetry reports is_synthetic() == False
+    live = UatuEvent(
+        source="auditd",
+        collection_method=CollectionMethod.AUDITD_LOG,
+        data_origin=DataOrigin.LIVE_TELEMETRY,
+        source_classification=SourceClassification.LIVE_AUDITD
+    )
+    assert live.is_synthetic() is False
+

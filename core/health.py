@@ -14,9 +14,11 @@ from typing import Dict, List, Optional, Any, Tuple
 
 
 class HealthState(str, Enum):
-    OK = "OK"
+    HEALTHY = "HEALTHY"
+    OK = "HEALTHY"
     DEGRADED = "DEGRADED"
     UNAVAILABLE = "UNAVAILABLE"
+    RECOVERING = "RECOVERING"
     UNKNOWN = "UNKNOWN"
 
 
@@ -31,6 +33,8 @@ class ComponentHealth:
     last_error: Optional[datetime] = None
     error_count: int = 0
     drop_count: int = 0
+    recovery_successes: int = 0
+    recovery_threshold: int = 3
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -43,6 +47,8 @@ class ComponentHealth:
             "last_error": self.last_error.isoformat() if self.last_error else None,
             "error_count": self.error_count,
             "drop_count": self.drop_count,
+            "recovery_successes": self.recovery_successes,
+            "recovery_threshold": self.recovery_threshold,
             "metadata": self.metadata
         }
 
@@ -69,13 +75,26 @@ class HealthRegistry:
             return self._components[name]
 
     def record_success(self, name: str, message: str = "Operating normally"):
-        """Record successful operation of a component."""
+        """Record successful operation of a component with recovery hysteresis."""
         with self._lock:
             comp = self._components.get(name)
             if not comp:
                 comp = self.register(name)
-            comp.state = HealthState.OK
-            comp.reason = message
+
+            # If component was previously UNAVAILABLE, DEGRADED, or RECOVERING
+            if comp.state in (HealthState.UNAVAILABLE, HealthState.DEGRADED, HealthState.RECOVERING):
+                comp.recovery_successes += 1
+                if comp.recovery_successes >= comp.recovery_threshold:
+                    comp.state = HealthState.HEALTHY
+                    comp.reason = message
+                else:
+                    comp.state = HealthState.RECOVERING
+                    comp.reason = f"Recovering ({comp.recovery_successes}/{comp.recovery_threshold} successful verifications): {message}"
+            else:
+                comp.state = HealthState.HEALTHY
+                comp.reason = message
+                comp.recovery_successes = comp.recovery_threshold
+
             comp.last_success = datetime.now(timezone.utc)
 
     def record_degraded(self, name: str, reason: str):
@@ -85,6 +104,7 @@ class HealthRegistry:
             if not comp:
                 comp = self.register(name)
             comp.state = HealthState.DEGRADED
+            comp.recovery_successes = 0
             comp.reason = reason
             comp.last_error = datetime.now(timezone.utc)
             comp.error_count += 1
@@ -95,6 +115,7 @@ class HealthRegistry:
             comp = self._components.get(name)
             if not comp:
                 comp = self.register(name)
+            comp.recovery_successes = 0
             comp.state = HealthState.UNAVAILABLE if is_fatal else HealthState.DEGRADED
             comp.reason = reason
             comp.last_error = datetime.now(timezone.utc)
@@ -147,7 +168,7 @@ class HealthRegistry:
                         critical_unavailable = True
                     else:
                         has_degraded = True
-                elif comp.state == HealthState.DEGRADED:
+                elif comp.state in (HealthState.DEGRADED, HealthState.RECOVERING):
                     has_degraded = True
 
             if critical_unavailable:

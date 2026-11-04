@@ -136,3 +136,18 @@ def test_health_registry_lifecycle_and_states():
     assert snapshot["status"] == "UNAVAILABLE"
     assert snapshot["drop_count"] == 5
 
+    # 6. Recovery hysteresis: Component recovering from UNAVAILABLE enters RECOVERING state
+    registry.record_success("auditd_collector", "First poll succeeded")
+    comp = registry.get_component("auditd_collector")
+    assert comp.state == HealthState.RECOVERING
+    assert comp.recovery_successes == 1
+
+    # Second success: still RECOVERING (threshold is 3)
+    registry.record_success("auditd_collector", "Second poll succeeded")
+    assert comp.state == HealthState.RECOVERING
+    assert comp.recovery_successes == 2
+
+    # Third success: transitions to HEALTHY
+    registry.record_success("auditd_collector", "Third poll succeeded")
+    assert comp.state == HealthState.HEALTHY
+

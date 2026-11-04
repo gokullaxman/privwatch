@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import platform
 import sys
 import time
 from typing import List, Optional
@@ -223,6 +224,89 @@ def cmd_report(args, orchestrator: PrivWatchOrchestrator):
         print(f"JSON Report exported:  {path}")
 
 
+def cmd_doctor(args, orchestrator: PrivWatchOrchestrator):
+    from core.diagnostics import SystemDiagnostics
+    print("=" * 72)
+    print("  UATU LINUX EDITION — SYSTEM DIAGNOSTICS (uatu doctor)")
+    print("=" * 72)
+
+    diag = SystemDiagnostics()
+    checks = diag.run_all_checks()
+
+    pass_count = sum(1 for c in checks if c.status == "PASS")
+    warn_count = sum(1 for c in checks if c.status == "WARN")
+    fail_count = sum(1 for c in checks if c.status == "FAIL")
+
+    for c in checks:
+        if c.status == "PASS":
+            prefix = "[\033[92mPASS\033[0m]" if sys.stdout.isatty() else "[PASS]"
+        elif c.status == "WARN":
+            prefix = "[\033[93mWARN\033[0m]" if sys.stdout.isatty() else "[WARN]"
+        else:
+            prefix = "[\033[91mFAIL\033[0m]" if sys.stdout.isatty() else "[FAIL]"
+
+        print(f"{prefix} {c.name}")
+        print(f"       Category: {c.category}")
+        print(f"       Message:  {c.message}")
+        if c.remediation and c.status != "PASS":
+            print(f"       Fix:      {c.remediation}")
+        print()
+
+    print("-" * 72)
+    print(f"Summary: {pass_count} passed, {warn_count} warnings, {fail_count} failures.")
+    if fail_count > 0:
+        print("[!] Critical failures detected. Resolve failed items before production use.")
+    else:
+        print("[+] System meets operational requirements for UATU.")
+
+
+def cmd_status(args, orchestrator: PrivWatchOrchestrator):
+    print("=" * 72)
+    print("  UATU LINUX EDITION — OPERATIONAL STATUS")
+    print("=" * 72)
+
+    posture = orchestrator.get_posture()
+    health = orchestrator.get_health()
+
+    print(f"Hostname:             {health.hostname}")
+    print(f"Timestamp:            {format_iso(health.timestamp)}")
+    print(f"Posture Score:        {posture.score}/100 ({posture.status})")
+    print(f"Active Findings:      {posture.total_findings} (Critical: {posture.critical_count}, High: {posture.high_count})")
+
+    incidents = orchestrator.storage.get_incidents()
+    print(f"Correlated Incidents: {len(incidents)}")
+    print(f"Telemetry Coverage:   {health.overall_coverage_pct}%\n")
+
+    print("Telemetry Sources:")
+    for src_name, src_status in health.sources.items():
+        state = "HEALTHY" if src_status.readable else ("DEGRADED" if src_status.available else "UNAVAILABLE")
+        print(f"  - {src_name:25} [{state:11}] events={src_status.event_count}")
+
+
+def cmd_logs(args, orchestrator: PrivWatchOrchestrator):
+    limit = getattr(args, "limit", 20) or 20
+    entries = orchestrator.storage.get_audit_logs(limit=limit)
+    print("=" * 72)
+    print(f"  IMMUTABLE AUDIT TRAIL (LAST {len(entries)} ENTRIES)")
+    print("=" * 72)
+    if not entries:
+        print("No audit trail entries recorded yet.")
+        return
+    for e in entries:
+        print(f"[{e['timestamp']}] {e['action']:30} actor={e['actor']:10} result={e['result']}")
+        if e.get("target"):
+            print(f"    Target:  {e['target']}")
+        print(f"    Hash:    {e['record_hash'][:16]}... (prev: {e['prev_hash'][:16]}...)")
+
+
+def cmd_version(args, orchestrator: PrivWatchOrchestrator):
+    print("UATU Linux Edition — Intelligent Privilege Escalation Disruption")
+    print("Version:     3.0.0 (Production Ready)")
+    print("Target OS:   Debian / Kali Linux (Strictly Linux-Native)")
+    print(f"Platform:    {platform.platform()}")
+    print(f"Python:      {platform.python_version()}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="uatu",
@@ -231,6 +315,12 @@ def main():
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # doctor
+    subparsers.add_parser("doctor", help="Run comprehensive system and environment diagnostics")
+
+    # status
+    subparsers.add_parser("status", help="Show system posture, incident count, and telemetry health")
 
     # scan
     subparsers.add_parser("scan", help="Run full privilege escalation scan and build attack paths")
@@ -257,18 +347,29 @@ def main():
     rep_parser.add_argument("item_id", help="Finding or Incident ID")
     rep_parser.add_argument("--format", choices=["json", "pdf"], default="json", help="Report format (default: json)")
 
+    # logs
+    logs_parser = subparsers.add_parser("logs", help="View recent entries from immutable audit trail")
+    logs_parser.add_argument("--limit", "-n", type=int, default=20, help="Number of entries to show (default: 20)")
+
+    # version
+    subparsers.add_parser("version", help="Show UATU product version and platform information")
+
     args = parser.parse_args()
 
     config = PrivWatchConfig()
     orchestrator = PrivWatchOrchestrator(config)
 
     commands = {
+        "doctor": cmd_doctor,
+        "status": cmd_status,
         "scan": cmd_scan,
         "watch": cmd_watch,
         "serve": cmd_serve,
         "remediate": cmd_remediate,
         "rollback": cmd_rollback,
-        "report": cmd_report
+        "report": cmd_report,
+        "logs": cmd_logs,
+        "version": cmd_version
     }
 
     cmd_fn = commands.get(args.command)

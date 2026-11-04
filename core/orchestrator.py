@@ -204,6 +204,10 @@ class PrivWatchOrchestrator:
         self._last_telemetry_health = health
         return health
 
+    def get_health(self) -> TelemetryHealth:
+        """Alias for get_telemetry_health."""
+        return self.get_telemetry_health()
+
     # --- Live Monitoring Service Lifecycle ---
 
     def start_monitoring(self, poll_interval_sec: int = 5):

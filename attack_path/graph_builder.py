@@ -14,7 +14,10 @@ import json
 from typing import List, Dict, Any, Optional, Set, Tuple
 import networkx as nx
 
-from core.models import Finding, Severity, AttackNode, AttackEdge, AttackPath, utc_now, format_iso
+from core.models import (
+    Finding, Severity, AttackNode, AttackEdge, AttackPath,
+    NodeType, EdgeType, EdgeClass, utc_now, format_iso
+)
 from core.storage import StorageEngine
 
 
@@ -31,8 +34,10 @@ class VerifiedAttackPath:
     severity: str
     confidence: float
     level: str = "CONFIGURATION_ONLY"  # Non-negotiable: Never claim exploited
+    edge_class: str = EdgeClass.CONFIGURATION_DERIVED.value
     bottleneck_node: Optional[str] = None
     recommended_disruption: Optional[str] = None
+    explanation: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -46,8 +51,10 @@ class VerifiedAttackPath:
             "severity": self.severity,
             "confidence": self.confidence,
             "level": self.level,
+            "edge_class": self.edge_class,
             "bottleneck_node": self.bottleneck_node,
-            "recommended_disruption": self.recommended_disruption
+            "recommended_disruption": self.recommended_disruption,
+            "explanation": self.explanation
         }
 
 
@@ -61,134 +68,258 @@ class AttackPathEngine:
     def build_graph_from_findings(self, findings: List[Finding]) -> List[VerifiedAttackPath]:
         """Parse findings into graph nodes and edges, then extract paths leading to root."""
         self.graph.clear()
-        self.graph.add_node("user:current", type="USER", label="Unprivileged User")
-        self.graph.add_node("user:root", type="ROOT", label="Root (UID 0)")
+        self.graph.add_node("user:current", type=NodeType.USER.value, label="Unprivileged User")
+        self.graph.add_node("user:root", type=NodeType.USER.value, label="Root (UID 0)")
 
         paths: List[VerifiedAttackPath] = []
+        seen_path_ids: Set[str] = set()
 
         for f in findings:
-            v = f.vector
             title = f.title
             res = f.affected_resource
-            evidence = f.evidence
+            evidence = f.evidence or {}
 
             # Pattern 1: Writable script referenced by root cron or systemd service
-            # user -> can_write -> script -> executed_by -> root cron/service -> yields -> root
             if "Writable Script" in title or "Writable Root Systemd" in title:
                 script_node = f"script:{res}"
+                service_type = NodeType.CRON_JOB.value if "Cron" in title else NodeType.SYSTEMD_UNIT.value
                 service_node = "service:root_cron" if "Cron" in title else "service:root_systemd"
 
-                self.graph.add_node(script_node, type="FILE", label=f"Writable Script: {res}", stat=evidence)
-                self.graph.add_node(service_node, type="SERVICE", label="Root Scheduled Service")
+                self.graph.add_node(script_node, type=NodeType.FILE.value, label=f"Writable Script: {res}", stat=evidence)
+                self.graph.add_node(service_node, type=service_type, label=f"Root Service ({service_type})")
 
-                self.graph.add_edge("user:current", script_node, relation="CAN_WRITE", finding_id=f.finding_id)
-                self.graph.add_edge(script_node, service_node, relation="EXECUTED_BY", finding_id=f.finding_id)
-                self.graph.add_edge(service_node, "user:root", relation="RUNS_AS", finding_id=f.finding_id)
+                self.graph.add_edge("user:current", script_node, relation=EdgeType.CAN_WRITE.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(script_node, service_node, relation=EdgeType.EXECUTED_BY.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(service_node, "user:root", relation=EdgeType.RUNS_AS.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
 
                 p_id = f"path_cron_{hashlib.sha256(res.encode()).hexdigest()[:12]}"
-                paths.append(VerifiedAttackPath(
-                    path_id=p_id,
-                    title=f"Transitive Root Escalation via Writable Scheduled Script ({res})",
-                    start_node="user:current",
-                    target_node="user:root",
-                    nodes=[
-                        {"id": "user:current", "type": "USER", "label": "Unprivileged User"},
-                        {"id": script_node, "type": "FILE", "label": f"Writable Script ({res})", "stat": evidence},
-                        {"id": service_node, "type": "SERVICE", "label": "Root Scheduled Service"},
-                        {"id": "user:root", "type": "ROOT", "label": "Root (UID 0)"}
-                    ],
-                    edges=[
-                        {"from": "user:current", "to": script_node, "relation": "CAN_WRITE"},
-                        {"from": script_node, "to": service_node, "relation": "EXECUTED_BY"},
-                        {"from": service_node, "to": "user:root", "relation": "RUNS_AS"}
-                    ],
-                    evidence={
-                        "finding_id": f.finding_id,
-                        "resource": res,
-                        "owner": evidence.get("owner", "unknown"),
-                        "mode": evidence.get("mode", "unknown"),
-                        "line": evidence.get("cron_line") or evidence.get("exec_line")
-                    },
-                    severity=Severity.CRITICAL.value,
-                    confidence=0.98,
-                    level="CONFIGURATION_ONLY",
-                    bottleneck_node=script_node,
-                    recommended_disruption=f"Restrict file permissions to root-only: chmod 755 {res} && chown root:root {res}"
-                ))
+                if p_id not in seen_path_ids:
+                    seen_path_ids.add(p_id)
+                    paths.append(VerifiedAttackPath(
+                        path_id=p_id,
+                        title=f"Transitive Root Escalation via Writable Scheduled Script ({res})",
+                        start_node="user:current",
+                        target_node="user:root",
+                        nodes=[
+                            {"id": "user:current", "type": NodeType.USER.value, "label": "Unprivileged User"},
+                            {"id": script_node, "type": NodeType.FILE.value, "label": f"Writable Script ({res})", "stat": evidence},
+                            {"id": service_node, "type": service_type, "label": "Root Scheduled Service"},
+                            {"id": "user:root", "type": NodeType.USER.value, "label": "Root (UID 0)"}
+                        ],
+                        edges=[
+                            {"from": "user:current", "to": script_node, "relation": EdgeType.CAN_WRITE.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": script_node, "to": service_node, "relation": EdgeType.EXECUTED_BY.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": service_node, "to": "user:root", "relation": EdgeType.RUNS_AS.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value}
+                        ],
+                        evidence={
+                            "finding_id": f.finding_id,
+                            "resource": res,
+                            "owner": evidence.get("owner", "unknown"),
+                            "mode": evidence.get("mode", "unknown"),
+                            "line": evidence.get("cron_line") or evidence.get("exec_line")
+                        },
+                        severity=Severity.CRITICAL.value,
+                        confidence=0.98,
+                        level="CONFIGURATION_ONLY",
+                        edge_class=EdgeClass.CONFIGURATION_DERIVED.value,
+                        bottleneck_node=script_node,
+                        recommended_disruption=f"Restrict file permissions to root-only: chmod 755 {res} && chown root:root {res}",
+                        explanation=f"Unprivileged user can write arbitrary commands into script '{res}', which will be executed automatically by root cron/systemd service."
+                    ))
 
             # Pattern 2: Sudo NOPASSWD execution
-            # user -> can_execute -> sudoers rule -> command -> yields -> root
             elif "NOPASSWD" in title:
                 cmd = evidence.get("command") or res or "ALL"
                 sudo_node = f"sudo:{cmd}"
-                self.graph.add_node(sudo_node, type="SUDO", label=f"NOPASSWD: {cmd}", rule=evidence.get("rule"))
+                self.graph.add_node(sudo_node, type=NodeType.SUDO_RULE.value, label=f"NOPASSWD: {cmd}", rule=evidence.get("rule"))
 
-                self.graph.add_edge("user:current", sudo_node, relation="SUDO_EXECUTE", finding_id=f.finding_id)
-                self.graph.add_edge(sudo_node, "user:root", relation="YIELDS_ROOT", finding_id=f.finding_id)
+                self.graph.add_edge("user:current", sudo_node, relation=EdgeType.CAN_EXECUTE.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(sudo_node, "user:root", relation=EdgeType.RUNS_AS.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
 
                 p_id = f"path_sudo_{hashlib.sha256(str(cmd).encode()).hexdigest()[:12]}"
-                paths.append(VerifiedAttackPath(
-                    path_id=p_id,
-                    title=f"Direct Sudo NOPASSWD Elevation via {cmd}",
-                    start_node="user:current",
-                    target_node="user:root",
-                    nodes=[
-                        {"id": "user:current", "type": "USER", "label": "Unprivileged User"},
-                        {"id": sudo_node, "type": "SUDO", "label": f"Sudo Rule ({cmd})"},
-                        {"id": "user:root", "type": "ROOT", "label": "Root (UID 0)"}
-                    ],
-                    edges=[
-                        {"from": "user:current", "to": sudo_node, "relation": "SUDO_EXECUTE"},
-                        {"from": sudo_node, "to": "user:root", "relation": "YIELDS_ROOT"}
-                    ],
-                    evidence={
-                        "finding_id": f.finding_id,
-                        "rule": evidence.get("rule"),
-                        "command": cmd
-                    },
-                    severity=Severity.CRITICAL.value if "ALL" in str(cmd) else Severity.HIGH.value,
-                    confidence=1.0,
-                    level="CONFIGURATION_ONLY",
-                    bottleneck_node=sudo_node,
-                    recommended_disruption=f"Require password authentication or remove NOPASSWD rule for {cmd} in /etc/sudoers"
-                ))
+                if p_id not in seen_path_ids:
+                    seen_path_ids.add(p_id)
+                    paths.append(VerifiedAttackPath(
+                        path_id=p_id,
+                        title=f"Direct Sudo NOPASSWD Elevation via {cmd}",
+                        start_node="user:current",
+                        target_node="user:root",
+                        nodes=[
+                            {"id": "user:current", "type": NodeType.USER.value, "label": "Unprivileged User"},
+                            {"id": sudo_node, "type": NodeType.SUDO_RULE.value, "label": f"Sudo Rule ({cmd})"},
+                            {"id": "user:root", "type": NodeType.USER.value, "label": "Root (UID 0)"}
+                        ],
+                        edges=[
+                            {"from": "user:current", "to": sudo_node, "relation": EdgeType.CAN_EXECUTE.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": sudo_node, "to": "user:root", "relation": EdgeType.RUNS_AS.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value}
+                        ],
+                        evidence={
+                            "finding_id": f.finding_id,
+                            "rule": evidence.get("rule"),
+                            "command": cmd
+                        },
+                        severity=Severity.CRITICAL.value if "ALL" in str(cmd) else Severity.HIGH.value,
+                        confidence=1.0,
+                        level="CONFIGURATION_ONLY",
+                        edge_class=EdgeClass.CONFIGURATION_DERIVED.value,
+                        bottleneck_node=sudo_node,
+                        recommended_disruption=f"Require password authentication or remove NOPASSWD rule for {cmd} in /etc/sudoers",
+                        explanation=f"Sudo configuration permits user to invoke '{cmd}' without password authentication, yielding immediate root privileges."
+                    ))
 
             # Pattern 3: Writable SUID binary
             elif "Writable SUID" in title:
-                bin_node = f"suid:{res}"
-                self.graph.add_node(bin_node, type="SUID", label=f"Writable SUID: {res}")
-                self.graph.add_edge("user:current", bin_node, relation="CAN_OVERWRITE", finding_id=f.finding_id)
-                self.graph.add_edge(bin_node, "user:root", relation="EXECUTES_AS_ROOT", finding_id=f.finding_id)
+                bin_node = f"file:{res}"
+                self.graph.add_node(bin_node, type=NodeType.FILE.value, label=f"Writable SUID: {res}")
+                self.graph.add_edge("user:current", bin_node, relation=EdgeType.CAN_WRITE.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(bin_node, "user:root", relation=EdgeType.RUNS_AS.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
 
                 p_id = f"path_suid_{hashlib.sha256(res.encode()).hexdigest()[:12]}"
-                paths.append(VerifiedAttackPath(
-                    path_id=p_id,
-                    title=f"Immediate Root Elevation via Overwrite of SUID Binary ({res})",
-                    start_node="user:current",
-                    target_node="user:root",
-                    nodes=[
-                        {"id": "user:current", "type": "USER", "label": "Unprivileged User"},
-                        {"id": bin_node, "type": "SUID", "label": f"Writable SUID Binary ({res})"},
-                        {"id": "user:root", "type": "ROOT", "label": "Root (UID 0)"}
-                    ],
-                    edges=[
-                        {"from": "user:current", "to": bin_node, "relation": "CAN_OVERWRITE"},
-                        {"from": bin_node, "to": "user:root", "relation": "EXECUTES_AS_ROOT"}
-                    ],
-                    evidence={
-                        "finding_id": f.finding_id,
-                        "resource": res,
-                        "owner": evidence.get("owner", "unknown"),
-                        "mode": evidence.get("mode", "unknown")
-                    },
-                    severity=Severity.CRITICAL.value,
-                    confidence=1.0,
-                    level="CONFIGURATION_ONLY",
-                    bottleneck_node=bin_node,
-                    recommended_disruption=f"Remove write permissions from {res}: chmod 755 {res}"
-                ))
+                if p_id not in seen_path_ids:
+                    seen_path_ids.add(p_id)
+                    paths.append(VerifiedAttackPath(
+                        path_id=p_id,
+                        title=f"Immediate Root Elevation via Overwrite of SUID Binary ({res})",
+                        start_node="user:current",
+                        target_node="user:root",
+                        nodes=[
+                            {"id": "user:current", "type": NodeType.USER.value, "label": "Unprivileged User"},
+                            {"id": bin_node, "type": NodeType.FILE.value, "label": f"Writable SUID Binary ({res})"},
+                            {"id": "user:root", "type": NodeType.USER.value, "label": "Root (UID 0)"}
+                        ],
+                        edges=[
+                            {"from": "user:current", "to": bin_node, "relation": EdgeType.CAN_WRITE.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": bin_node, "to": "user:root", "relation": EdgeType.RUNS_AS.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value}
+                        ],
+                        evidence={
+                            "finding_id": f.finding_id,
+                            "resource": res,
+                            "owner": evidence.get("owner", "unknown"),
+                            "mode": evidence.get("mode", "unknown")
+                        },
+                        severity=Severity.CRITICAL.value,
+                        confidence=1.0,
+                        level="CONFIGURATION_ONLY",
+                        edge_class=EdgeClass.CONFIGURATION_DERIVED.value,
+                        bottleneck_node=bin_node,
+                        recommended_disruption=f"Remove write permissions from {res}: chmod 755 {res}",
+                        explanation=f"SUID binary '{res}' has write permissions, allowing an attacker to replace its code with arbitrary payload that executes as root."
+                    ))
 
-        # Save attack paths to storage
+            # Pattern 4: SUID GTFOBins exploitation
+            elif "Exploitable SUID Binary" in title:
+                bin_node = f"file:{res}"
+                self.graph.add_node(bin_node, type=NodeType.FILE.value, label=f"GTFOBins SUID: {res}")
+                self.graph.add_edge("user:current", bin_node, relation=EdgeType.CAN_EXECUTE.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(bin_node, "user:root", relation=EdgeType.ESCALATES_TO.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+
+                p_id = f"path_gtfo_{hashlib.sha256(res.encode()).hexdigest()[:12]}"
+                if p_id not in seen_path_ids:
+                    seen_path_ids.add(p_id)
+                    paths.append(VerifiedAttackPath(
+                        path_id=p_id,
+                        title=f"GTFOBins Privilege Escalation via SUID Executable ({res})",
+                        start_node="user:current",
+                        target_node="user:root",
+                        nodes=[
+                            {"id": "user:current", "type": NodeType.USER.value, "label": "Unprivileged User"},
+                            {"id": bin_node, "type": NodeType.FILE.value, "label": f"SUID Binary ({res})"},
+                            {"id": "user:root", "type": NodeType.USER.value, "label": "Root (UID 0)"}
+                        ],
+                        edges=[
+                            {"from": "user:current", "to": bin_node, "relation": EdgeType.CAN_EXECUTE.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": bin_node, "to": "user:root", "relation": EdgeType.ESCALATES_TO.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value}
+                        ],
+                        evidence={
+                            "finding_id": f.finding_id,
+                            "resource": res,
+                            "gtfobins": evidence.get("gtfobins", "")
+                        },
+                        severity=f.severity,
+                        confidence=f.confidence,
+                        level="CONFIGURATION_ONLY",
+                        edge_class=EdgeClass.CONFIGURATION_DERIVED.value,
+                        bottleneck_node=bin_node,
+                        recommended_disruption=f"Strip SUID bit from binary: chmod u-s {res}",
+                        explanation=f"Executable '{res}' contains known shell escape sequence in GTFOBins catalog allowing immediate privilege escalation."
+                    ))
+
+            # Pattern 5: Dangerous Linux Capability
+            elif "Dangerous File Capability" in title:
+                bin_node = f"file:{res}"
+                cap_name = evidence.get("capability", "cap_setuid")
+                cap_node = f"cap:{cap_name}"
+                self.graph.add_node(bin_node, type=NodeType.FILE.value, label=f"Elevated Executable: {res}")
+                self.graph.add_node(cap_node, type=NodeType.CAPABILITY.value, label=f"Capability: {cap_name}")
+
+                self.graph.add_edge("user:current", bin_node, relation=EdgeType.CAN_EXECUTE.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(bin_node, cap_node, relation=EdgeType.HAS_CAPABILITY.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(cap_node, "user:root", relation=EdgeType.ESCALATES_TO.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+
+                p_id = f"path_cap_{hashlib.sha256(res.encode()).hexdigest()[:12]}"
+                if p_id not in seen_path_ids:
+                    seen_path_ids.add(p_id)
+                    paths.append(VerifiedAttackPath(
+                        path_id=p_id,
+                        title=f"Direct Elevation via File Capability {cap_name} on {res}",
+                        start_node="user:current",
+                        target_node="user:root",
+                        nodes=[
+                            {"id": "user:current", "type": NodeType.USER.value, "label": "Unprivileged User"},
+                            {"id": bin_node, "type": NodeType.FILE.value, "label": f"Binary ({res})"},
+                            {"id": cap_node, "type": NodeType.CAPABILITY.value, "label": f"Capability ({cap_name})"},
+                            {"id": "user:root", "type": NodeType.USER.value, "label": "Root (UID 0)"}
+                        ],
+                        edges=[
+                            {"from": "user:current", "to": bin_node, "relation": EdgeType.CAN_EXECUTE.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": bin_node, "to": cap_node, "relation": EdgeType.HAS_CAPABILITY.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": cap_node, "to": "user:root", "relation": EdgeType.ESCALATES_TO.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value}
+                        ],
+                        evidence={"finding_id": f.finding_id, "resource": res, "capability": cap_name},
+                        severity=f.severity,
+                        confidence=f.confidence,
+                        level="CONFIGURATION_ONLY",
+                        edge_class=EdgeClass.CONFIGURATION_DERIVED.value,
+                        bottleneck_node=bin_node,
+                        recommended_disruption=f"Strip elevated capability: setcap -r {res}",
+                        explanation=f"Binary '{res}' holds '{cap_name}', enabling non-root caller to bypass discretionary access control and acquire root privileges."
+                    ))
+
+            # Pattern 6: Writable Directory in PATH
+            elif "Writable Directory in PATH" in title:
+                dir_node = f"dir:{res}"
+                self.graph.add_node(dir_node, type=NodeType.DIRECTORY.value, label=f"Writable PATH Dir: {res}")
+                self.graph.add_edge("user:current", dir_node, relation=EdgeType.CAN_WRITE.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+                self.graph.add_edge(dir_node, "user:root", relation=EdgeType.RUNS_AS.value, edge_class=EdgeClass.CONFIGURATION_DERIVED.value)
+
+                p_id = f"path_dir_{hashlib.sha256(res.encode()).hexdigest()[:12]}"
+                if p_id not in seen_path_ids:
+                    seen_path_ids.add(p_id)
+                    paths.append(VerifiedAttackPath(
+                        path_id=p_id,
+                        title=f"Execution Order Hijack via Writable PATH Directory ({res})",
+                        start_node="user:current",
+                        target_node="user:root",
+                        nodes=[
+                            {"id": "user:current", "type": NodeType.USER.value, "label": "Unprivileged User"},
+                            {"id": dir_node, "type": NodeType.DIRECTORY.value, "label": f"Directory ({res})"},
+                            {"id": "user:root", "type": NodeType.USER.value, "label": "Root (UID 0)"}
+                        ],
+                        edges=[
+                            {"from": "user:current", "to": dir_node, "relation": EdgeType.CAN_WRITE.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value},
+                            {"from": dir_node, "to": "user:root", "relation": EdgeType.RUNS_AS.value, "edge_class": EdgeClass.CONFIGURATION_DERIVED.value}
+                        ],
+                        evidence={"finding_id": f.finding_id, "resource": res},
+                        severity=f.severity,
+                        confidence=f.confidence,
+                        level="CONFIGURATION_ONLY",
+                        edge_class=EdgeClass.CONFIGURATION_DERIVED.value,
+                        bottleneck_node=dir_node,
+                        recommended_disruption=f"Remove group/other write permissions: chmod 755 {res}",
+                        explanation=f"Directory '{res}' is traversed in root PATH and writable by unauthorized users, enabling trojan binary placement."
+                    ))
+
+        # Save attack paths, nodes, and edges to storage
         for p in paths:
             ap_model = AttackPath(
                 path_id=p.path_id,
