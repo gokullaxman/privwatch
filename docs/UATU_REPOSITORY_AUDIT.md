@@ -127,3 +127,4 @@ While PrivWatch 3.1.0 excels at passive Red Team configuration auditing and advi
 6. **Incomplete Privileged Service Capabilities**: Daemon only provides read-only log reading, lacking authorized containment operations.
 7. **Dashboard Functional Scope Deficit**: UI lacks 7 of the 11 required enterprise operational views.
 8. **Legacy Branding & Identity**: Naming, banners, service units, and paths still reference PrivWatch rather than UATU Linux Edition.
+

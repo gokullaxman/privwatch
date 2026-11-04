@@ -164,3 +164,8 @@ class PrivWatchConfig:
             return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
         except Exception:
             return cls()
+
+
+# Export UatuConfig for modern imports
+from core.configuration import UatuConfig
+

@@ -1,6 +1,7 @@
 """
-PrivWatch 3.0 - Standardized Data Models
-Strictly typed, evidence-backed security entities for events, findings, incidents, and telemetry health.
+PrivWatch 3.0 / UATU Linux Edition - Standardized Data Models
+Strictly typed, evidence-backed security entities for events, findings, incidents,
+attack graphs, policies, containment actions, risk assessments, and telemetry health.
 """
 
 from dataclasses import dataclass, field, asdict
@@ -8,7 +9,9 @@ from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
-from typing import Dict, List, Optional, Any
+import secrets
+import time
+from typing import Dict, List, Optional, Any, Union
 import uuid
 
 
@@ -26,6 +29,57 @@ class IncidentStatus(str, Enum):
     INVESTIGATING = "INVESTIGATING"
     RESOLVED = "RESOLVED"
     FALSE_POSITIVE = "FALSE_POSITIVE"
+
+
+class NodeType(str, Enum):
+    USER = "USER"
+    GROUP = "GROUP"
+    PROCESS = "PROCESS"
+    FILE = "FILE"
+    CAPABILITY = "CAPABILITY"
+    SERVICE = "SERVICE"
+    SOCKET = "SOCKET"
+    SUDO_RULE = "SUDO_RULE"
+    CRON_JOB = "CRON_JOB"
+
+
+class EdgeType(str, Enum):
+    OWNS = "OWNS"
+    MEMBER_OF = "MEMBER_OF"
+    CAN_EXECUTE = "CAN_EXECUTE"
+    CAN_WRITE = "CAN_WRITE"
+    ESCALATES_TO = "ESCALATES_TO"
+    SPAWNED = "SPAWNED"
+    HOLDS_CAPABILITY = "HOLDS_CAPABILITY"
+    LISTENS_ON = "LISTENS_ON"
+
+
+class PolicyMode(str, Enum):
+    ENFORCE = "ENFORCE"
+    MONITOR = "MONITOR"
+    DISABLED = "DISABLED"
+
+
+class PolicyAction(str, Enum):
+    ALLOW = "ALLOW"
+    DENY = "DENY"
+    ALERT = "ALERT"
+    ISOLATE = "ISOLATE"
+    KILL = "KILL"
+
+
+class ContainmentActionType(str, Enum):
+    KILL_PROCESS = "KILL_PROCESS"
+    ISOLATE_NETWORK = "ISOLATE_NETWORK"
+    REVOKE_PRIVILEGE = "REVOKE_PRIVILEGE"
+    QUARANTINE_FILE = "QUARANTINE_FILE"
+
+
+class ContainmentStatus(str, Enum):
+    REQUESTED = "REQUESTED"
+    EXECUTED = "EXECUTED"
+    FAILED = "FAILED"
+    ROLLED_BACK = "ROLLED_BACK"
 
 
 def utc_now() -> datetime:
@@ -47,7 +101,6 @@ def parse_iso(ts: Optional[str]) -> Optional[datetime]:
     if not ts:
         return None
     try:
-        # Handle trailing Z
         if ts.endswith("Z"):
             ts = ts[:-1] + "+00:00"
         dt = datetime.fromisoformat(ts)
@@ -296,3 +349,203 @@ class SystemPosture:
             status=status,
             calculated_at=utc_now()
         )
+
+
+# --- UATU Attack Path & Prevention Models ---
+
+@dataclass
+class AttackNode:
+    """Graph node representing an entity (user, process, binary, capability, socket)."""
+    node_id: str
+    node_type: str
+    name: str
+    properties: Dict[str, Any] = field(default_factory=dict)
+    risk_score: float = 0.0
+    evidence_ref: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "node_type": self.node_type,
+            "name": self.name,
+            "properties": self.properties,
+            "risk_score": self.risk_score,
+            "evidence_ref": self.evidence_ref
+        }
+
+
+@dataclass
+class AttackEdge:
+    """Directed edge representing a relation or privilege transition between nodes."""
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    relationship_type: str
+    technique_id: str = ""
+    confidence: float = 1.0
+    cost: float = 1.0
+    evidence_ref: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "edge_id": self.edge_id,
+            "source_node_id": self.source_node_id,
+            "target_node_id": self.target_node_id,
+            "relationship_type": self.relationship_type,
+            "technique_id": self.technique_id,
+            "confidence": self.confidence,
+            "cost": self.cost,
+            "evidence_ref": self.evidence_ref
+        }
+
+
+@dataclass
+class AttackPath:
+    """Complete exploitable attack path from an unprivileged state to elevated privileges."""
+    path_id: str = field(default_factory=lambda: f"path_{secrets.token_hex(8)}")
+    start_node_id: str = ""
+    target_node_id: str = ""
+    node_ids: List[str] = field(default_factory=list)
+    edge_ids: List[str] = field(default_factory=list)
+    total_risk_score: float = 0.0
+    confidence: float = 1.0
+    bottleneck_node_id: Optional[str] = None
+    recommended_disruption: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "path_id": self.path_id,
+            "start_node_id": self.start_node_id,
+            "target_node_id": self.target_node_id,
+            "node_ids": self.node_ids,
+            "edge_ids": self.edge_ids,
+            "total_risk_score": self.total_risk_score,
+            "confidence": self.confidence,
+            "bottleneck_node_id": self.bottleneck_node_id,
+            "recommended_disruption": self.recommended_disruption
+        }
+
+
+@dataclass
+class SecurityPolicy:
+    """Defensive security policy enforcing privilege acquisition boundaries."""
+    policy_id: str
+    name: str
+    description: str
+    policy_type: str
+    mode: str = PolicyMode.MONITOR.value
+    rules: List[Dict[str, Any]] = field(default_factory=list)
+    target_scope: str = "global"
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+    is_active: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "policy_id": self.policy_id,
+            "name": self.name,
+            "description": self.description,
+            "policy_type": self.policy_type,
+            "mode": self.mode,
+            "rules": self.rules,
+            "target_scope": self.target_scope,
+            "created_at": format_iso(self.created_at),
+            "updated_at": format_iso(self.updated_at),
+            "is_active": self.is_active
+        }
+
+
+@dataclass
+class PolicyEvaluation:
+    """Evaluation record of a policy check against a telemetry event."""
+    evaluation_id: str = field(default_factory=lambda: f"eval_{secrets.token_hex(8)}")
+    policy_id: str = ""
+    event_id: str = ""
+    result: str = PolicyAction.ALLOW.value
+    matched_rules: List[str] = field(default_factory=list)
+    explanation: str = ""
+    timestamp: datetime = field(default_factory=utc_now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "evaluation_id": self.evaluation_id,
+            "policy_id": self.policy_id,
+            "event_id": self.event_id,
+            "result": self.result,
+            "matched_rules": self.matched_rules,
+            "explanation": self.explanation,
+            "timestamp": format_iso(self.timestamp)
+        }
+
+
+@dataclass
+class ContainmentAction:
+    """Audit record of a containment or disruption action executed against an attack path."""
+    action_id: str = field(default_factory=lambda: f"cont_{secrets.token_hex(8)}")
+    action_type: str = ContainmentActionType.KILL_PROCESS.value
+    target: str = ""
+    reason: str = ""
+    status: str = ContainmentStatus.REQUESTED.value
+    actor: str = "system"
+    timestamp: datetime = field(default_factory=utc_now)
+    rollback_data: Dict[str, Any] = field(default_factory=dict)
+    result_details: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "action_id": self.action_id,
+            "action_type": self.action_type,
+            "target": self.target,
+            "reason": self.reason,
+            "status": self.status,
+            "actor": self.actor,
+            "timestamp": format_iso(self.timestamp),
+            "rollback_data": self.rollback_data,
+            "result_details": self.result_details
+        }
+
+
+@dataclass
+class RiskScoreCard:
+    """Multi-dimensional risk assessment score card."""
+    overall_score: float = 0.0
+    threat_level: str = Severity.LOW.value
+    dimension_scores: Dict[str, float] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=utc_now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "overall_score": self.overall_score,
+            "threat_level": self.threat_level,
+            "dimension_scores": self.dimension_scores,
+            "timestamp": format_iso(self.timestamp)
+        }
+
+
+@dataclass
+class NetworkSocketEvent:
+    """Linux network socket telemetry record."""
+    inode: int
+    protocol: str
+    local_address: str
+    local_port: int
+    remote_address: str
+    remote_port: int
+    state: str
+    pid: Optional[int] = None
+    exe: Optional[str] = None
+    timestamp: datetime = field(default_factory=utc_now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "inode": self.inode,
+            "protocol": self.protocol,
+            "local_address": self.local_address,
+            "local_port": self.local_port,
+            "remote_address": self.remote_address,
+            "remote_port": self.remote_port,
+            "state": self.state,
+            "pid": self.pid,
+            "exe": self.exe,
+            "timestamp": format_iso(self.timestamp)
+        }

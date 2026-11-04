@@ -19,11 +19,11 @@ This matrix maps every functional, architectural, security, and verification req
 | **REQ-09** | Safe, allowlisted least-privilege remediation with atomic rollback | Remediation Engine | `modules/response/remediation_engine.py` | `POST /api/v1/remediation/plan`, `POST /api/v1/remediation/execute` | *Security Posture* | `test_remediation.py` | IN PROGRESS |
 | **REQ-10** | Multi-dimensional risk assessment (Impact, Exploitability, Path, Reliability) | Risk Engine | `risk/scoring.py`, `risk/prioritization.py` | `GET /api/v1/risk/posture` | *Security Overview* | `test_risk_engine.py` | PLANNED (Phase 7) |
 | **REQ-11** | Centralized UATU Security Operations Dashboard with 11 functional views | Web Dashboard | `web/app.py`, `dashboard/` | `GET /dashboard`, `GET /api/v1/overview` | *All 11 Dashboard Pages* | `test_api_integration.py` | IN PROGRESS |
-| **REQ-12** | Measured low-latency event processing and real-time alert generation | Real-Time Engine | `core/event_bus.py`, `ml/inference/model_runner.py` | `GET /api/v1/ml/status` | *Live Monitoring* | `test_inference.py`, `test_model_evaluation.py` | IN PROGRESS |
-| **REQ-13** | Forensic incident timelines with cryptographic evidence hashes | Forensic Engine | `forensics/timeline.py`, `core/evidence.py`, `reports/` | `POST /api/v1/reports/generate`, `GET /api/v1/reports/download` | *Forensics & Reports* | `test_exporters.py`, `test_forensics.py` | IN PROGRESS |
+| **REQ-12** | Measured low-latency event processing and real-time alert generation | Real-Time Engine | `core/event_bus.py`, `core/event_schema.py` | `GET /api/v1/ml/status` | *Live Monitoring* | `test_event_bus.py`, `test_event_schema.py` | VERIFIED |
+| **REQ-13** | Forensic incident timelines with cryptographic evidence hashes | Forensic Engine | `forensics/timeline.py`, `core/storage.py`, `reports/` | `POST /api/v1/reports/generate`, `GET /api/v1/reports/download` | *Forensics & Reports* | `test_storage_evidence_store.py`, `test_exporters.py` | IN PROGRESS |
 | **REQ-14** | Controlled attack disruption & active containment (kill, stop, isolate, net-drop) | Containment Engine | `response/containment.py`, `privileged_service/` | `POST /api/v1/containment/execute`, `POST /api/v1/containment/verify` | *Containment Center* | `test_containment_engine.py` | PLANNED (Phase 9) |
-| **REQ-15** | Strict Linux-native platform verification and capability detection | Platform Engine | `core/platform_validator.py` | `GET /api/v1/system` | *System Settings*, *Security Overview* | `test_security_validation.py` | IN PROGRESS |
-| **REQ-16** | Explicit Windows rejection; Windows unsupported | Platform Engine | `core/platform_validator.py`, `privwatch.py`, `uatu.py` | N/A (Halt at startup) | N/A (Platform gate) | `test_security_validation.py` | VERIFIED |
+| **REQ-15** | Strict Linux-native platform verification and capability detection | Platform Engine | `core/platform.py`, `core/platform_validator.py` | `GET /api/v1/system` | *System Settings*, *Security Overview* | `test_platform_and_command_runner.py`, `test_security_validation.py` | VERIFIED |
+| **REQ-16** | Explicit Windows rejection; Windows unsupported | Platform Engine | `core/platform.py`, `privwatch.py`, `uatu.py` | N/A (Halt at startup) | N/A (Platform gate) | `test_platform_and_command_runner.py`, `test_security_validation.py` | VERIFIED |
 
 ---
 
@@ -34,3 +34,4 @@ Each requirement progresses through four strictly verified stages:
 2. **IN PROGRESS**: Implementation files created or undergoing enhancement; initial unit tests written.
 3. **IMPLEMENTED**: Fully implemented in codebase, integrated into application workflow and API/Dashboard.
 4. **VERIFIED**: Passes automated unit tests, integration tests, security failure-mode tests, and independent operational verification.
+

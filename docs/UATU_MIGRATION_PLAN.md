@@ -46,13 +46,19 @@ flowchart TD
 
 ---
 
-### Phase 1: Core Architecture, Event Bus & Extended Event Schema
+### Phase 1: Core Architecture, Event Bus & Extended Event Schema (COMPLETED)
 - **Objective**: Establish typed event models, database schema migrations, and asynchronous event bus.
 - **Key Modules**:
-  - `core/event_bus.py`: In-memory thread-safe pub/sub event router for decoupling telemetry from detection and containment.
-  - `core/models.py`: Extend data models with `AttackNode`, `AttackEdge`, `AttackPath`, `SecurityPolicy`, `ContainmentAction`, `RiskScoreCard`, `NetworkSocketEvent`.
-  - `core/storage.py`: SQLite schema migration adding tables: `attack_nodes`, `attack_edges`, `attack_paths`, `policies`, `policy_evaluations`, `containment_records`, `network_sockets`.
-- **Exit Criteria**: Schema migration tests pass; existing events and findings remain intact; event bus verified with multi-subscriber unit tests.
+  - `core/platform.py`: Linux-native platform validator and capability inspector (`CapabilityReport`, strict `assert_linux()`).
+  - `core/command_runner.py`: Safe execution of external commands (`shell=False`, argument list validation, NUL byte rejection, fixed safe environment, frozen `CommandResult`).
+  - `tests/test_command_runner_guard.py`: Repository AST guard enforcing zero usage of `shell=True`, `os.system`, or `os.popen`.
+  - `core/event_schema.py`: Standardized versioned `UatuEvent` schema with monotonic IDs, tz-aware UTC timestamps, enums, [0.0, 1.0] confidence preservation, and canonical SHA-256 integrity hash.
+  - `core/event_bus.py`: In-memory thread-safe pub/sub event router with bounded queue, backpressure policies, and subscriber error isolation.
+  - `core/models.py`: Extended data models (`AttackNode`, `AttackEdge`, `AttackPath`, `SecurityPolicy`, `PolicyEvaluation`, `ContainmentAction`, `RiskScoreCard`, `NetworkSocketEvent`).
+  - `core/storage.py`: SQLite WAL schema with 23 tables, immutability ABORT triggers on `events` and `evidence_objects`, SHA-256 hash chaining with `verify_chain()`, and 0600 POSIX file permissions.
+  - `core/configuration.py`: Typed TOML configuration parser rejecting unknown keys, masking secrets, and checking world-writable file permissions.
+  - `core/health.py`: Health registry tracking subsystem status (`OK`, `DEGRADED`, `UNAVAILABLE`), drop counters, and snapshots.
+- **Exit Criteria**: All Phase 1 modules created; 32 new unit tests pass; entire test suite (101 passed, 1 skipped) passes cleanly. Closed defects D1, D2, D6, D7, and DEF-UATU-09.
 
 ---
 
@@ -188,3 +194,4 @@ flowchart TD
   - `systemd/uatu.service` and `systemd/uatu-collector.service`.
   - Comprehensive documentation set (22 markdown documents in `docs/`).
 - **Exit Criteria**: Ready for production deployment on Kali, Debian, Ubuntu, and RHEL Linux endpoints.
+

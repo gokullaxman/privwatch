@@ -138,8 +138,53 @@ This register documents all discovered architectural, functional, security, and 
   1. Inspect `core/storage.py: init_db()`.
   2. *Observed*: No schema definitions for graph nodes, edges, paths, policies, or containment history.
 - **Required Correction**: Update schema with migration routines adding `attack_nodes`, `attack_edges`, `attack_paths`, `policies`, `policy_evaluations`, `containment_records`, and `network_sockets`.
-- **Verification Test**: `tests/test_storage_schema.py::test_uatu_extended_schema_integrity`
-- **Status**: PLANNED (Phase 1)
+- **Verification Test**: `tests/test_storage_evidence_store.py::test_storage_initializes_all_tables`
+- **Status**: CLOSED (Phase 1)
+- **Resolution Summary**: `core/storage.py` was fully upgraded with 23 entity tables, forward migration logic, append-only triggers, and zero-confidence preservation. Verified with `test_storage_evidence_store.py`.
+
+---
+
+### DEF-UATU-13: Inconsistent Event Schema Across Telemetry Subsystems (D1)
+
+- **Component**: Core Models & Telemetry Ingestion (`core/models.py`, `core/event_schema.py`)
+- **Severity**: HIGH
+- **Technical Description**: Security telemetry lacked a unified, versioned, cryptographic schema with provenance classes, data origins, and collection method enums.
+- **Verification Test**: `tests/test_event_schema.py`
+- **Status**: CLOSED (Phase 1)
+- **Resolution Summary**: Implemented `core/event_schema.py` with `UatuEvent`, monotonic IDs, UTC timezone-aware validation, explicit enums (`ProvenanceClass`, `DataOrigin`, `CollectionStatus`, `CollectionMethod`), confidence range enforcement, and canonical SHA-256 integrity hashing.
+
+---
+
+### DEF-UATU-14: Insecure External Command Execution Safety (D2)
+
+- **Component**: Command Execution (`core/command_exec.py`, `core/command_runner.py`)
+- **Severity**: HIGH
+- **Technical Description**: Potential exposure to command injection, shell metacharacters, unvalidated timeouts, or shell=True invocations across modules.
+- **Verification Test**: `tests/test_command_runner_guard.py`, `tests/test_platform_and_command_runner.py`
+- **Status**: CLOSED (Phase 1)
+- **Resolution Summary**: Implemented `core/command_runner.py` with `CommandRunner`, strict `shell=False`, NUL byte rejection, fixed safe `PATH`, `LC_ALL=C`, mandatory timeouts, and frozen `CommandResult`. Enforced by AST guard test `test_command_runner_guard.py` verifying 0 shell=True or os.system/popen usages.
+
+---
+
+### DEF-UATU-15: Loss of Zero-Confidence Telemetry Values (D7)
+
+- **Component**: Storage Engine (`core/storage.py`)
+- **Severity**: MEDIUM
+- **Technical Description**: `get_events` previously evaluated `if r['confidence']:` which coerced `confidence=0.0` to default `1.0`, corrupting unverified anomaly telemetry.
+- **Verification Test**: `tests/test_storage_evidence_store.py::test_storage_confidence_zero_preservation`
+- **Status**: CLOSED (Phase 1)
+- **Resolution Summary**: Fixed confidence checks in `core/storage.py` to `if r['confidence'] is not None`, preserving 0.0 accurately.
+
+---
+
+### DEF-UATU-16: Database Tamper-Resistance & Audit Integrity (D6)
+
+- **Component**: Storage Engine (`core/storage.py`)
+- **Severity**: HIGH
+- **Technical Description**: Evidence tables lacked immutable database triggers to prevent UPDATE/DELETE modifications, and audit log lacked cryptographic verify_chain() reporting the exact tampered row.
+- **Verification Test**: `tests/test_storage_evidence_store.py::test_storage_event_immutability_triggers`, `test_storage_audit_hash_chain_verification_and_tamper_detection`
+- **Status**: CLOSED (Phase 1)
+- **Resolution Summary**: Added SQLite triggers raising ABORT on UPDATE/DELETE on `events` and `evidence_objects`. Added SHA-256 hash chaining with `verify_chain()` detecting tampering and identifying the exact broken row index.
 
 ---
 
@@ -188,3 +233,4 @@ This register documents all discovered architectural, functional, security, and 
 - **Required Correction**: Implement unified `uatu.py` CLI (preserving `privwatch.py` as a backwards-compatible alias), update systemd service unit to `systemd/uatu.service`, update socket to `/run/uatu/uatu.sock`, and update documentation suite.
 - **Verification Test**: `tests/test_cli_and_service.py::test_uatu_cli_and_service_definitions`
 - **Status**: PLANNED (Phase 13)
+
