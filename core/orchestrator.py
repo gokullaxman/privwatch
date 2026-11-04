@@ -11,6 +11,7 @@ import time
 from typing import Dict, List, Optional, Any, Callable
 
 from core.config import PrivWatchConfig
+from core.event_bus import EventBus
 from core.models import (
     SecurityEvent, Finding, Incident, TelemetryHealth, SystemPosture,
     Severity, utc_now
@@ -25,6 +26,7 @@ class PrivWatchOrchestrator:
     def __init__(self, config: Optional[PrivWatchConfig] = None):
         self.config = config or PrivWatchConfig()
         self.storage = StorageEngine(self.config.db_path)
+        self.event_bus = EventBus()
         self.findings: List[Finding] = []
         self.events: List[SecurityEvent] = []
         self.incidents: List[Incident] = []
@@ -70,17 +72,41 @@ class PrivWatchOrchestrator:
                 if results:
                     crit = sum(1 for f in results if f.severity == Severity.CRITICAL.value)
                     high = sum(1 for f in results if f.severity == Severity.HIGH.value)
-                    Logger.warning(f"  → Found {len(results)} issues ({crit} CRITICAL, {high} HIGH)")
+                    Logger.warning(f"  -> Found {len(results)} issues ({crit} CRITICAL, {high} HIGH)")
                 else:
-                    Logger.success(f"  → {name}: No vulnerabilities identified")
+                    Logger.success(f"  -> {name}: No vulnerabilities identified")
             except Exception as e:
-                Logger.error(f"  → Scanner error on {name}: {str(e)}")
+                Logger.error(f"  -> Scanner error on {name}: {str(e)}")
 
         # Filter against active suppression rules
         filtered = [f for f in all_findings if not self.storage.is_suppressed(f.vector, f.title)]
 
         self.findings = filtered
         self.storage.save_findings(filtered)
+
+        # Store every finding as an event in the evidence store with data_origin=STATIC_SCAN
+        from core.event_schema import UatuEvent, DataOrigin, ProvenanceClass, CollectionStatus
+        finding_events = [
+            UatuEvent(
+                event_id=f"evt_scan_{f.finding_id}",
+                timestamp=f.timestamp,
+                host_id="localhost",
+                hostname="localhost",
+                source=f"scanner:{f.vector}",
+                event_type=f"SCAN_FINDING_{f.vector.upper()}",
+                severity=f.severity,
+                command=f.title,
+                exe=f.affected_resource,
+                evidence=f.evidence,
+                evidence_ref=f.finding_id,
+                provenance_class=ProvenanceClass.DERIVED,
+                data_origin=DataOrigin.STATIC_SCAN,
+                confidence=f.confidence,
+                collection_status=CollectionStatus.SUCCESS
+            )
+            for f in filtered
+        ]
+        self.storage.save_events(finding_events)
         return filtered
 
     def run_blue_team_analysis(self) -> List[Finding]:
@@ -118,11 +144,11 @@ class PrivWatchOrchestrator:
                 if findings:
                     crit = sum(1 for f in findings if f.severity == Severity.CRITICAL.value)
                     high = sum(1 for f in findings if f.severity == Severity.HIGH.value)
-                    Logger.critical(f"  → Detected {len(findings)} events ({crit} CRITICAL, {high} HIGH)")
+                    Logger.critical(f"  -> Detected {len(findings)} events ({crit} CRITICAL, {high} HIGH)")
                 else:
-                    Logger.success(f"  → {name}: No anomalies detected")
+                    Logger.success(f"  -> {name}: No anomalies detected")
             except Exception as e:
-                Logger.error(f"  → Detector error on {name}: {str(e)}")
+                Logger.error(f"  -> Detector error on {name}: {str(e)}")
 
         # PrivWatch 3.1: Non-blocking Advisory ML Evaluation
         if collected_events:
@@ -131,10 +157,10 @@ class PrivWatchOrchestrator:
                 ml_detector = AdvisoryMLDetector()
                 ml_findings = ml_detector.evaluate_telemetry(collected_events)
                 if ml_findings:
-                    Logger.info(f"  → ML Advisory: Generated {len(ml_findings)} explainable anomaly finding(s)")
+                    Logger.info(f"  -> ML Advisory: Generated {len(ml_findings)} explainable anomaly finding(s)")
                     all_findings.extend(ml_findings)
             except Exception as e:
-                Logger.warning(f"  → ML Advisory evaluation skipped: {e}")
+                Logger.warning(f"  -> ML Advisory evaluation skipped: {e}")
 
         self.findings.extend(all_findings)
         self.events.extend(collected_events)

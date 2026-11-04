@@ -1,11 +1,12 @@
 """
-PrivWatch 3.0 - Integration Tests for REST API Endpoints & Security
+PrivWatch / UATU 3.0 - Integration Tests for REST API Endpoints & Security
 """
 
 from fastapi.testclient import TestClient
 import pytest
 
-from web.app import app, API_KEY
+from web.app import app, API_KEY, storage
+from core.models import Finding, Severity
 
 
 @pytest.fixture
@@ -22,11 +23,19 @@ def test_dashboard_endpoint_returns_html(client):
     response = client.get("/dashboard")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "PRIVWATCH 3.0" in response.text
+    assert "UATU LINUX" in response.text
 
 
-def test_overview_api_returns_posture_and_health(client):
-    response = client.get("/api/v1/overview")
+def test_public_health_endpoints(client):
+    res1 = client.get("/health")
+    assert res1.status_code == 200
+    res2 = client.get("/api/v1/health")
+    assert res2.status_code == 200
+    assert "hostname" in res2.json()
+
+
+def test_overview_api_returns_posture_and_health(client, admin_headers):
+    response = client.get("/api/v1/overview", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()
     assert 'posture' in data
@@ -35,13 +44,29 @@ def test_overview_api_returns_posture_and_health(client):
     assert 'monitoring' in data
 
 
-def test_system_info_api_endpoint(client):
-    response = client.get("/api/v1/system")
+def test_system_info_api_endpoint(client, admin_headers):
+    response = client.get("/api/v1/system", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()
     assert 'hostname' in data
     assert 'kernel' in data
     assert 'os_info' in data
+
+
+def test_unauthenticated_protected_endpoints_return_401(client):
+    """Verify that unauthenticated callers to protected endpoints receive 401 Unauthorized."""
+    endpoints = [
+        "/api/v1/overview",
+        "/api/v1/findings",
+        "/api/v1/events",
+        "/api/v1/incidents",
+        "/api/v1/attack-paths",
+        "/api/v1/system",
+        "/api/v1/timeline"
+    ]
+    for ep in endpoints:
+        res = client.get(ep)
+        assert res.status_code == 401, f"Expected 401 for unauthenticated GET {ep}, got {res.status_code}"
 
 
 def test_unauthenticated_mutation_rejected_with_401(client):
@@ -64,7 +89,7 @@ def test_monitoring_lifecycle_endpoints(client, admin_headers):
     assert res_start.json()['monitoring'] is True
 
     # 2. Check status
-    res_status = client.get("/api/v1/monitoring/status")
+    res_status = client.get("/api/v1/monitoring/status", headers=admin_headers)
     assert res_status.status_code == 200
     assert res_status.json()['monitoring'] is True
 
@@ -74,16 +99,44 @@ def test_monitoring_lifecycle_endpoints(client, admin_headers):
     assert res_stop.json()['monitoring'] is False
 
 
-def test_report_generation_api(client):
-    response = client.post("/api/v1/reports/generate", json={"format": "json", "mode": "red"})
+def test_report_generation_api(client, admin_headers):
+    response = client.post("/api/v1/reports/generate", json={"format": "json", "mode": "red"}, headers=admin_headers)
     assert response.status_code == 200
     data = response.json()
     assert data['status'] == "SUCCESS"
     assert "privwatch_report" in data['output_file']
 
 
-def test_ml_status_api_endpoint(client):
-    response = client.get("/api/v1/ml/status")
+def test_attack_paths_api_endpoint(client, admin_headers):
+    res = client.get("/api/v1/attack-paths", headers=admin_headers)
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+
+
+def test_export_item_routes(client, admin_headers):
+    # Create test finding
+    fnd = Finding(
+        finding_id="fnd_test_export_item",
+        vector="CRON",
+        severity=Severity.HIGH.value,
+        title="Test Cron Finding",
+        affected_resource="/etc/cron.d/test",
+        evidence={"owner": "root", "mode": "0777"}
+    )
+    storage.save_finding(fnd)
+
+    # Export JSON
+    res_json = client.get("/api/v1/reports/export/json?item_type=finding&item_id=fnd_test_export_item", headers=admin_headers)
+    assert res_json.status_code == 200
+    assert "attachment" in res_json.headers.get("content-disposition", "") or "filename" in res_json.headers.get("content-disposition", "")
+
+    # Export PDF
+    res_pdf = client.get("/api/v1/reports/export/pdf?item_type=finding&item_id=fnd_test_export_item", headers=admin_headers)
+    assert res_pdf.status_code == 200
+
+
+def test_ml_status_api_endpoint(client, admin_headers):
+    response = client.get("/api/v1/ml/status", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "OPERATIONAL"
@@ -110,4 +163,3 @@ def test_ml_evaluate_api_endpoint(client, admin_headers):
     assert "confidence" in res
     assert "composite_risk_score" in res
     assert len(res["contributing_features"]) > 0
-

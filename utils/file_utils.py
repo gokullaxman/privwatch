@@ -171,11 +171,14 @@ def get_file_stat_metadata(file_path: str) -> Dict[str, Any]:
     """Retrieve detailed stat metadata dictionary for evidence bundles."""
     try:
         st = os.stat(file_path)
+        mode_str = get_permission_string(file_path)
         meta = {
             'path': file_path,
             'size_bytes': st.st_size,
             'uid': st.st_uid,
             'gid': st.st_gid,
+            'owner': f"{st.st_uid}:{st.st_gid}",
+            'mode': mode_str,
             'mode_octal': oct(st.st_mode)[-4:],
             'is_suid': bool(st.st_mode & stat.S_ISUID),
             'is_sgid': bool(st.st_mode & stat.S_ISGID),
@@ -187,4 +190,4 @@ def get_file_stat_metadata(file_path: str) -> Dict[str, Any]:
             meta['posix_acls'] = acls
         return meta
     except Exception as e:
-        return {'path': file_path, 'error': str(e)}
+        return {'path': file_path, 'owner': 'unknown', 'mode': 'unknown', 'error': str(e)}

@@ -135,3 +135,4 @@ def test_health_registry_lifecycle_and_states():
     assert snapshot["hostname"] == "kali-test-host"
     assert snapshot["status"] == "UNAVAILABLE"
     assert snapshot["drop_count"] == 5
+

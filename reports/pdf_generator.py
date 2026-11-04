@@ -186,6 +186,111 @@ class PDFGenerator:
         return output_file
 
     @staticmethod
+    def generate_item_report(item: Any, output_file: str, related_events: Optional[List[Any]] = None) -> str:
+        """Generate ReportLab PDF for a single Finding or Incident with evidence hashes and limitations."""
+        out_path = Path(output_file).resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+
+            doc = SimpleDocTemplate(str(out_path), pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+            styles = getSampleStyleSheet()
+
+            title_style = ParagraphStyle('ItemTitle', parent=styles['Heading1'], fontSize=18, leading=22, textColor=colors.HexColor('#0f172a'), fontName='Helvetica-Bold')
+            sub_style = ParagraphStyle('ItemSub', parent=styles['Normal'], fontSize=9, leading=13, textColor=colors.HexColor('#475569'))
+            h2_style = ParagraphStyle('ItemH2', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
+            body_style = ParagraphStyle('ItemBody', parent=styles['Normal'], fontSize=9, leading=13, textColor=colors.HexColor('#334155'))
+            code_style = ParagraphStyle('ItemCode', parent=styles['Normal'], fontSize=8, leading=11, fontName='Courier', textColor=colors.HexColor('#0f172a'), backColor=colors.HexColor('#f8fafc'))
+
+            elements = []
+            is_finding = hasattr(item, "finding_id")
+            item_type = "Finding" if is_finding else "Incident"
+            item_id = getattr(item, "finding_id", None) or getattr(item, "incident_id", "unknown")
+            sev = getattr(item, "severity", "HIGH")
+
+            sev_color = colors.HexColor('#dc2626') if sev in ("CRITICAL", "HIGH") else colors.HexColor('#d97706')
+
+            elements.append(Paragraph(f"UATU Security Report — {item_type} #{item_id}", title_style))
+            elements.append(Paragraph(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} &nbsp;|&nbsp; Target Host: localhost", sub_style))
+            elements.append(Spacer(1, 10))
+            elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#cbd5e1')))
+            elements.append(Spacer(1, 12))
+
+            # Summary Table
+            table_rows = [
+                ["Item Type", item_type],
+                ["Identifier", item_id],
+                ["Title", getattr(item, "title", "")],
+                ["Severity", sev],
+                ["Confidence", f"{getattr(item, 'confidence', 1.0):.2f}"],
+            ]
+            if is_finding:
+                table_rows.append(["Vector", getattr(item, "vector", "GENERIC")])
+                table_rows.append(["Affected Resource", getattr(item, "affected_resource", "")])
+                table_rows.append(["Evidence Hash (SHA-256)", item.evidence_hash() if hasattr(item, "evidence_hash") else "N/A"])
+            else:
+                table_rows.append(["Status", getattr(item, "status", "NEW")])
+                table_rows.append(["Attribution", json.dumps(getattr(item, "attribution", {}))])
+                table_rows.append(["Constituent Events", str(len(getattr(item, "event_ids", [])))])
+
+            t = Table(table_rows, colWidths=[160, 370])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f1f5f9')),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#0f172a')),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 15))
+
+            # Narrative / Details
+            if is_finding:
+                elements.append(Paragraph("Vulnerability Description", h2_style))
+                elements.append(Paragraph(getattr(item, "description", ""), body_style))
+                elements.append(Spacer(1, 10))
+                elements.append(Paragraph("Risk Explanation", h2_style))
+                elements.append(Paragraph(getattr(item, "risk_explanation", ""), body_style))
+                elements.append(Spacer(1, 10))
+                elements.append(Paragraph("Defensive Remediation", h2_style))
+                elements.append(Paragraph(getattr(item, "remediation", "").replace('\n', '<br/>'), code_style))
+            else:
+                elements.append(Paragraph("Incident Hypothesis & Forensics", h2_style))
+                elements.append(Paragraph(getattr(item, "hypothesis", ""), body_style))
+                elements.append(Spacer(1, 10))
+                elements.append(Paragraph("Ordered Evidence Timeline", h2_style))
+                if related_events:
+                    for idx, ev in enumerate(related_events, 1):
+                        ts_str = ev.timestamp.isoformat() if hasattr(ev, "timestamp") else "N/A"
+                        elements.append(Paragraph(f"<b>Event {idx}:</b> [{ts_str}] {getattr(ev, 'event_type', '')} by user={getattr(ev, 'user', '')} (exe: {getattr(ev, 'exe', getattr(ev, 'command', ''))})", code_style))
+                        elements.append(Spacer(1, 2))
+                else:
+                    elements.append(Paragraph(f"Event IDs: {', '.join(getattr(item, 'event_ids', []))}", code_style))
+
+            elements.append(Spacer(1, 15))
+            # Collection Limitations Section
+            elements.append(Paragraph("Collection Limitations & Methodology", h2_style))
+            elements.append(Paragraph(
+                "• Static findings are evaluated based on POSIX filesystem permission bits and system configurations.<br/>"
+                "• Telemetry events represent observed live kernel (auditd) or systemd journal logs.<br/>"
+                "• In absence of active kernel audit rules, transient processes executing under 50ms may not appear.",
+                body_style
+            ))
+
+            doc.build(elements)
+            return str(out_path)
+        except Exception:
+            return PDFGenerator._generate_text_fallback([item] if is_finding else [], str(out_path), "audit", None)
+
+
+    @staticmethod
     def _generate_text_fallback(findings: List[Finding], output_file: str,
                                 mode: str, posture: Optional[SystemPosture]) -> str:
         """Fallback generator producing a clean text file"""

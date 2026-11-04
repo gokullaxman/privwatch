@@ -76,7 +76,7 @@ class Logger:
 
     @classmethod
     def success(cls, message: str, context: Optional[Dict[str, Any]] = None):
-        prefix = f"{cls.GREEN}[✓]{cls.RESET}"
+        prefix = f"{cls.GREEN}[+]{cls.RESET}"
         print(f"{prefix} [{cls._timestamp()}] {message}")
         cls._write_json("SUCCESS", message, context)
 
@@ -88,7 +88,7 @@ class Logger:
 
     @classmethod
     def error(cls, message: str, context: Optional[Dict[str, Any]] = None):
-        prefix = f"{cls.RED}[✗]{cls.RESET}"
+        prefix = f"{cls.RED}[-]{cls.RESET}"
         print(f"{prefix} [{cls._timestamp()}] {message}", file=sys.stderr)
         cls._write_json("ERROR", message, context)
 

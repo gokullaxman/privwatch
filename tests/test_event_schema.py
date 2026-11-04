@@ -128,3 +128,4 @@ def test_event_round_trip_serialization():
     assert reconstructed.euid == 0
     assert reconstructed.evidence == {"capability": "CAP_SETUID"}
     assert reconstructed.verify_integrity() is True
+

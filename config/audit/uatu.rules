@@ -1,0 +1,24 @@
+## UATU Linux Edition - Targeted Linux Audit Framework (auditd) Rules
+## Monitored events: Process execution (execve), Privilege elevation (setuid family),
+## and Sensitive Configuration file modifications (/etc/sudoers, /etc/passwd, /etc/shadow).
+
+# Delete existing rules and set buffer
+-D
+-b 8192
+-f 1
+
+# 1. Monitored Executions (execve) for 64-bit and 32-bit architectures
+-a always,exit -F arch=b64 -S execve -k uatu_exec
+-a always,exit -F arch=b32 -S execve -k uatu_exec
+
+# 2. Monitored Privilege Transition Syscalls (setuid / setgid family)
+-a always,exit -F arch=b64 -S setuid,setgid,setreuid,setregid,setresuid,setresgid -k uatu_priv_esc
+-a always,exit -F arch=b32 -S setuid,setgid,setreuid,setregid,setresuid,setresgid -k uatu_priv_esc
+
+# 3. File Integrity Watches on Privileged Authentication & Policy Files
+-w /etc/sudoers -p wa -k uatu_sudoers
+-w /etc/sudoers.d/ -p wa -k uatu_sudoers
+-w /etc/passwd -p wa -k uatu_passwd
+-w /etc/shadow -p wa -k uatu_shadow
+
+# End of UATU audit rules

@@ -91,6 +91,39 @@ class JSONExporter:
         return str(out_path)
 
     @staticmethod
+    def export_item_json(item: Any, output_file: str, related_events: Optional[List[Any]] = None) -> str:
+        """Export a single Finding or Incident to JSON with evidence refs, hashes, and collection limitations"""
+        out_path = Path(output_file).resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        is_finding = hasattr(item, "finding_id")
+        item_type = "finding" if is_finding else "incident"
+        item_id = getattr(item, "finding_id", None) or getattr(item, "incident_id", "unknown")
+
+        report = {
+            'report_metadata': {
+                'platform': 'UATU',
+                'version': '3.0.0',
+                'generated_at': format_iso(utc_now()),
+                'item_type': item_type,
+                'item_id': item_id,
+                'collection_limitations': [
+                    "Static findings are evaluated based on POSIX filesystem permission bits and system configurations.",
+                    "Telemetry events represent observed live kernel (auditd) or systemd journal logs.",
+                    "In absence of active kernel audit rules, transient processes executing under 50ms may not appear."
+                ]
+            },
+            'item': item.to_dict() if hasattr(item, "to_dict") else item,
+            'evidence_hash': item.evidence_hash() if hasattr(item, "evidence_hash") else None,
+            'related_events': [e.to_dict() if hasattr(e, "to_dict") else e for e in (related_events or [])]
+        }
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, cls=JSONReportEncoder)
+
+        return str(out_path)
+
+    @staticmethod
     def _count_by_vector(findings: List[Finding]) -> Dict[str, int]:
         counts: Dict[str, int] = {}
         for f in findings:

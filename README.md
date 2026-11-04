@@ -1,232 +1,119 @@
-# PrivWatch 3.1
+# UATU Linux Edition (v3.0.0)
 
-**Evidence-Driven Linux Privilege Escalation Detection, AI/ML Anomaly Scoring, Telemetry Monitoring & Forensics Platform**
+**Intelligent Privilege Escalation Detection, Prevention, and Attack-Path Disruption**
 
-[![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen.svg)](docs/TESTING.md)
-[![Platform: 100% Linux](https://img.shields.io/badge/platform-Linux%20Only-blue.svg)](docs/LINUX_PLATFORM_SUPPORT.md)
+[![Platform: 100% Linux Native](https://img.shields.io/badge/platform-Linux%20Only-blue.svg)](LIMITATIONS.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![ML: Validated](https://img.shields.io/badge/AI%2FML-Validated%20Gate-success.svg)](docs/ML_VALIDATION_GATE.md)
-[![Status: Production](https://img.shields.io/badge/status-production-success.svg)](CHANGELOG.md)
+[![Audit Framework: auditd](https://img.shields.io/badge/telemetry-Linux%20Audit%20Netlink-orange.svg)](config/audit/uatu.rules)
 
 ---
 
 ## 📋 Overview
 
-**PrivWatch 3.1** is an enterprise-grade Linux security platform engineered to identify local privilege escalation vulnerabilities, monitor system telemetry in real time, detect adversary exploitation attempts using a **four-tier hybrid AI/ML detection engine**, reconstruct forensic attack timelines, and execute controlled least-privilege remediation.
+**UATU Linux Edition** is a production-grade, 100% Linux-native security platform engineered to identify exploitable privilege escalation pathways, monitor kernel and process telemetry in real time, correlate attack sequences with tamper-resistant evidence, and safely disrupt confirmed attack paths using reversible, least-privilege remediation.
 
-Operating under a strict **Real System Data Only** standard, PrivWatch never fabricates telemetry or simulates alerts. Every finding, anomaly score, and incident is cryptographically fingerprinted and directly tied to operating system evidence.
-
-```
-╔═══════════════════════════════════════════════════════════╗
-║                  PrivWatch v3.1.0                         ║
-║        Linux Privilege Escalation & AI/ML Detection       ║
-║                  Mode:              RED                   ║
-╚═══════════════════════════════════════════════════════════╝
-```
+Operating under a strict **Evidence-First Standard**, UATU never fabricates telemetry, simulates counters, or hardcodes posture scores. Everything displayed in reports and on the dashboard is backed by verified POSIX attributes, cryptographic evidence hashes, or real Linux Audit netlink / auth log events.
 
 ---
 
-## 🚀 Key Capabilities
+## ⚡ Quickstart on Kali Linux
 
-### 1. 🤖 Four-Tier Hybrid AI/ML Detection Engine (New in 3.1)
-- **Tier 1 (Deterministic Baseline):** Benchmark implementing established POSIX security heuristics (`DeterministicBaselineModel`).
-- **Tier 2 (Unsupervised Anomaly Scoring):** Dual-redundancy Isolation Forest (`LinuxIsolationForestDetector`) and Median Absolute Deviation modified Z-score scorer (`RobustStatisticalScorer`) for rare execution paths.
-- **Tier 3 (Supervised Threat Classifier):** Balanced Random Forest ensemble classifying events into 6 threat categories with probability calibration (`LinuxPrivilegeClassifier`).
-- **Tier 4 (Sequential Markov Modeling):** First-order Markov chain with Laplace smoothing evaluating state transitions across execution sequences (`MarkovPrivilegeSequenceModel`).
-- **Explainability & Attribution:** Every prediction outputs top contributing features, percentage weights, anomaly distance, and evidence links (`FeatureAttributor`).
-- **Model Validation Gate:** Strict 10-point gate enforcing schema completeness, zero-leakage scenario isolation, CPU latency budgets ($\le 25$ ms), and SHA-256 weight verification (`ModelValidationGate`).
-- **Model Drift Monitoring:** Tracks Population Stability Index (PSI) and inference latency profiles across live telemetry streams (`ModelDriftMonitor`).
+### 1. Prerequisites Installation
+Run the following commands on your Kali Linux VM to install required system utilities and Python dependencies:
 
-### 2. 🔴 Red Team Assessment Engine
-Audits 9 distinct Linux privilege escalation vectors:
-- **SUID/SGID Binaries:** Targeted enumeration across binary paths, parent directory write checks, GTFOBins catalog cross-referencing, and distribution allowlists.
-- **Sudo Misconfigurations:** Non-interactive sudo rule auditing, NOPASSWD detection, wildcard analysis, and sudoers permission validation.
-- **Linux Capabilities:** Evaluates dangerous capabilities (`CAP_SETUID`, `CAP_DAC_OVERRIDE`, `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_SYS_MODULE`) using targeted `getcap` execution.
-- **Cron & Systemd Timers:** Inspects system crontabs, cron directories, and systemd timers to identify writable scripts and binaries.
-- **Password & Auth Databases:** Audits `/etc/passwd` and `/etc/shadow` for write access, rogue UID 0 accounts, blank password fields, and exposed backups.
-- **Kernel Vulnerability Assessment:** Distribution-aware kernel evaluation querying local package managers (`dpkg`, `rpm`) to account for backported security patches.
-- **PATH Hijacking:** Detects relative directory references (`.`) and writable directories preceding system binaries.
-- **SSH Security:** Audits `/etc/ssh/sshd_config`, private host keys, and world-writable `authorized_keys`.
-- **Container Boundaries:** Audits exposed `/var/run/docker.sock`, privileged devices, and container escape vectors.
-
-### 2. 🔵 Blue Team Detection & Telemetry Engine
-Continuous telemetry collection directly from Linux kernel and system interfaces:
-- **Telemetry Sources:** Linux Audit (`auditd`), systemd journal (`journald`), authentication logs (`auth.log`/`secure`), and live process monitoring (`/proc`/`psutil`).
-- **Telemetry Health Assessment:** Evaluates available vs missing sources, permission constraints, and monitoring coverage percentage.
-- **Sudo Brute-Force Detection:** Sliding-window correlation identifying repeated password failures for the same user.
-- **Verified SUID Execution:** Confirmed execution of elevated binaries via audit syscalls (`ruid != euid`) rather than naive text matching.
-- **Process Lineage Anomaly Detection:** Identifies unprivileged daemons (`www-data`, `nobody`) spawning interactive shells or binaries executing from `/tmp`.
-- **Tampering Detection:** Real-time detection of modifications to `/etc/passwd`, `/etc/shadow`, or crontabs.
-
-### 3. ⏱️ Forensic & Correlation Engine
-- **Multi-Factor Correlation:** Evaluates user identity, hostname, process parentage (PID/PPID), and chronological sequences.
-- **Unified Forensic Timeline:** Reconstructs raw events, security findings, and correlated attack sequences in a single chronological stream.
-- **Case Management:** Built-in investigation tracking with status updates and analyst notes.
-
-### 4. 🛡️ Controlled Prevention & Remediation
-- **Safe by Default:** Read-only operation during all scans.
-- **Least-Privilege Playbooks:** Generates exact hardening commands and explains consequences.
-- **Mandatory Safety Gates:** Requires explicit confirmation (`confirmed=True`, `dry_run=False`) for any OS alteration.
-- **Rollback Assurance:** Generates pre-execution file backups and automated rollback commands.
-- **Audit Logging:** Every administrative action and remediation execution is permanently logged to SQLite.
-
-### 5. 📊 Reporting & Operations Dashboard
-- **Executive PDF Reports:** Multi-page, professionally styled PDF reports built with ReportLab, featuring posture metrics, tables, and remediation playbooks.
-- **Machine-Readable Exports:** Complete JSON reports with evidence hashes and CSV spreadsheet exports.
-- **Web Operations Dashboard:** Modern responsive SOC interface (FastAPI + HTML5/Tailwind) featuring 10 operational views.
-
----
-
-## 📂 Architecture
-
-```
-privwatch/
-├── privwatch.py                 # Unified CLI entry point (Modes: red, blue, timeline, dashboard, monitor)
-├── privwatch_v2.py              # Backward compatibility forwarder
-├── config/
-│   ├── settings.py              # Constants, allowlists, and vector paths
-│   └── vectors.json             # Vector taxonomy and severity ratings
-├── core/
-│   ├── config.py                # Hierarchical configuration loader
-│   ├── models.py                # SecurityEvent, Finding, Incident, TelemetryHealth, Posture
-│   ├── storage.py               # SQLite persistence and audit engine
-│   ├── evidence.py              # Cryptographic hashing & credential sanitization
-│   ├── logger.py                # Structured console & JSON logger
-│   ├── scanner.py               # Base Red Team scanner class
-│   ├── log_parser.py            # Base Blue Team telemetry parser class
-│   └── orchestrator.py          # Central coordinator & service lifecycle
-├── modules/
-│   ├── red_mode/                # 9 Privilege Escalation Scanners
-│   │   ├── suid_scanner.py
-│   │   ├── sudo_scanner.py
-│   │   ├── capabilities_scanner.py
-│   │   ├── cron_scanner.py
-│   │   ├── passwd_scanner.py
-│   │   ├── kernel_scanner.py
-│   │   ├── path_scanner.py
-│   │   ├── ssh_scanner.py
-│   │   └── container_scanner.py
-│   ├── blue_mode/               # Telemetry Collectors & Detectors
-│   │   ├── telemetry/
-│   │   │   ├── health_monitor.py
-│   │   │   ├── auth_collector.py
-│   │   │   ├── journal_collector.py
-│   │   │   ├── audit_collector.py
-│   │   │   └── process_collector.py
-│   │   ├── sudo_detector.py
-│   │   ├── suid_detector.py
-│   │   ├── passwd_detector.py
-│   │   ├── cron_detector.py
-│   │   ├── kernel_detector.py
-│   │   ├── capabilities_detector.py
-│   │   └── process_detector.py
-│   ├── timeline/                # Forensic Correlation & Timeline
-│   │   ├── event_correlator.py
-│   │   ├── timeline_builder.py
-│   │   └── investigation.py
-│   └── response/                # Prevention & Remediation
-│       ├── remediation_engine.py
-│       └── suppression.py
-├── reports/
-│   ├── json_exporter.py         # Full JSON serialization
-│   ├── pdf_generator.py         # Professional PDF reports (ReportLab)
-│   └── csv_exporter.py          # CSV spreadsheet exporter
-├── web/
-│   └── app.py                   # FastAPI REST API & Single-Page Dashboard
-├── tests/                       # Automated Pytest Suite (34 Tests)
-│   ├── conftest.py              # Isolated test fixtures
-│   ├── test_scanners.py
-│   ├── test_log_parsers.py
-│   ├── test_event_normalization.py
-│   ├── test_correlation.py
-│   ├── test_remediation.py
-│   ├── test_exporters.py
-│   ├── test_api_integration.py
-│   └── test_security_validation.py
-├── docs/                        # Complete Technical Documentation
-│   ├── PRIVWATCH_3_AUDIT.md
-│   ├── PRIVWATCH_3_ARCHITECTURE.md
-│   ├── IMPLEMENTATION_PLAN.md
-│   ├── INSTALLATION.md
-│   ├── USAGE.md
-│   ├── DETECTION_RULES.md
-│   ├── TELEMETRY_SOURCES.md
-│   ├── SECURITY_MODEL.md
-│   ├── API_REFERENCE.md
-│   ├── TROUBLESHOOTING.md
-│   └── TESTING.md
-├── CHANGELOG.md                 # Detailed version history
-├── requirements.txt             # Project dependencies
-└── LICENSE                      # MIT License
-```
-
----
-
-## ⚡ Quick Start
-
-### 1. Installation
 ```bash
-git clone https://github.com/gokullaxman/privwatch.git
-cd privwatch
+# Update package repositories and install auditd and libcap tools
+sudo apt-get update
+sudo apt-get install -y auditd libcap2-bin python3 python3-pip python3-venv git
 
-# Install dependencies
+# Clone repository and navigate into project directory
+cd /path/to/uatu-linux
+
+# Create and activate Python virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install Python requirements
 pip install -r requirements.txt
 ```
 
-### 2. Verify Installation
-```bash
-# Verify Python compilation
-python3 -m compileall .
-
-# Run automated test suite
-python3 -m pytest -v
-```
-
-### 3. Usage Examples
+### 2. Install Kernel Audit Rules
+Deploy the UATU audit rules to monitor `execve`, credential transitions (`setuid` family), and sensitive configuration file watches:
 
 ```bash
-# Red Team assessment (produces JSON, PDF, or CSV report)
-python3 privwatch.py --mode red --format all
-
-# Blue Team log forensics and telemetry analysis
-python3 privwatch.py --mode blue --format pdf
-
-# Forensic timeline reconstruction and attack correlation
-python3 privwatch.py --mode timeline
-
-# Continuous background telemetry monitoring
-python3 privwatch.py --mode monitor
-
-# Launch interactive Web Security Operations Dashboard
-python3 privwatch.py --mode dashboard --port 8443
-# Navigate to: http://127.0.0.1:8443
+# Install audit rules (requires root)
+sudo bash scripts/install_audit_rules.sh
 ```
+
+### 3. Run Privilege Escalation Scan & Attack Path Mapping
+Enumerate local configuration defects (SUID/SGID, sudoers NOPASSWD/wildcards, capabilities, shadow/passwd permissions, writable scheduled scripts) and map multi-hop attack graphs:
+
+```bash
+# Run scan
+./uatu.sh scan
+```
+
+### 4. Start Live Telemetry Watch & Real-Time Incident Detection
+Monitor live process execution and authentication attempts in the background:
+
+```bash
+# Start watch in foreground (or run with sudo for full log visibility)
+./uatu.sh watch
+```
+
+### 5. Launch Local Security Operations Dashboard
+Start the local web dashboard bound strictly to `127.0.0.1:8443`:
+
+```bash
+# Start web dashboard
+./uatu.sh serve
+```
+Open **http://127.0.0.1:8443/dashboard** in your browser. All requests are authenticated via the local security token stored at `./config/uatu_token` (mode 0600).
 
 ---
 
-## 📖 Documentation Index
+## 🛠️ CLI Command Reference
 
-- [Final Linux-Native Engineering Audit](docs/PRIVWATCH_3_FINAL_LINUX_AUDIT.md)
-- [Complete Defect Register](docs/PRIVWATCH_3_DEFECT_REGISTER.md)
-- [Defect Rectification & Hardening Report](docs/PRIVWATCH_3_RECTIFICATION_REPORT.md)
-- [Linux Platform Support Specification](docs/LINUX_PLATFORM_SUPPORT.md)
-- [Linux Audit Subsystem (auditd) Configuration](docs/LINUX_AUDIT_CONFIGURATION.md)
-- [Remediation & Rollback Security Model](docs/REMEDIATION_SECURITY.md)
-- [REST API & SOC Operations Security Model](docs/API_SECURITY.md)
-- [System Architecture Blueprint](docs/PRIVWATCH_3_ARCHITECTURE.md)
-- [Installation Guide](docs/INSTALLATION.md)
-- [User Guide & Operations Manual](docs/USAGE.md)
-- [Detection Rules & Heuristics](docs/DETECTION_RULES.md)
-- [Telemetry Sources & Ingestion](docs/TELEMETRY_SOURCES.md)
-- [Security Model & Safety Gates](docs/SECURITY_MODEL.md)
-- [REST API Reference](docs/API_REFERENCE.md)
-- [Troubleshooting & Diagnostics](docs/TROUBLESHOOTING.md)
-- [Automated Testing Guide](docs/TESTING.md)
+UATU provides a unified executable runner (`./uatu.sh`):
+
+| Command | Description |
+| :--- | :--- |
+| `./uatu.sh scan` | Enumerate 9 privilege escalation vectors and map attack paths (`[CONFIGURATION_ONLY]`). |
+| `./uatu.sh watch` | Ingest live events from Linux auditd / auth log and correlate incidents in real time. |
+| `./uatu.sh serve` | Launch the FastAPI dark-theme dashboard on `127.0.0.1:8443`. |
+| `./uatu.sh remediate <finding_id>` | Inspect and dry-run least-privilege permission correction for a finding. |
+| `./uatu.sh remediate <finding_id> --apply` | Apply validated permission fix and record rollback snapshot. |
+| `./uatu.sh rollback <finding_id>` | Exact atomic rollback to restore pre-remediation permissions. |
+| `./uatu.sh report <item_id> --format=pdf` | Generate ReportLab PDF report for a finding or incident. |
+| `./uatu.sh report <item_id> --format=json` | Export machine-readable JSON report with evidence hash. |
 
 ---
 
-## 📄 License
+## 🧪 Live Prototype Demonstration (`demo.sh`)
 
-PrivWatch is licensed under the [MIT License](LICENSE).
-Copyright (c) 2026 Charith Penugonda.
+To verify the complete vertical slice end-to-end on a Kali Linux machine:
+
+```bash
+# Run the automated end-to-end verification demo
+chmod +x scripts/demo.sh
+sudo bash scripts/demo.sh
+```
+
+The script demonstrates:
+1. **D1:** Creating a writable script referenced by a scheduled service $\rightarrow$ running `./uatu.sh scan` $\rightarrow$ displaying the mapped attack path `[CONFIGURATION_ONLY]`.
+2. **D2:** Generating 3 failed sudo authentication attempts in a test account $\rightarrow$ running detection evaluation $\rightarrow$ raising a correlated security incident (`Repeated Authentication Failures: sudo`).
+3. **D3:** Running `./uatu.sh remediate <id>` (dry-run simulation) $\rightarrow$ applying the fix (`--apply`) $\rightarrow$ verifying permissions $\rightarrow$ executing `./uatu.sh rollback <id>` $\rightarrow$ verifying exact restoration.
+
+---
+
+## 🔒 Security Guarantees & Non-Negotiable Rules
+
+1. **Linux-Native Only:** Windows and macOS execution paths are strictly rejected.
+2. **Zero Fabrication:** Missing telemetry sources are explicitly labeled `UNAVAILABLE`. Counters never display synthetic or fake numbers.
+3. **No Shell Injections:** All system operations use `core.command_runner.run_command()` with strict argument vector lists (`shell=False`).
+4. **Configuration-Only Paths:** Attack graphs are strictly labeled `CONFIGURATION_ONLY` to avoid falsely claiming an active exploit has occurred.
+5. **Least Privilege Remediation:** Remediation engines validate canonical paths, reject world-writable permissions (never `chmod 666`), enforce dry-run by default, and provide exact rollbacks.
+6. **Local-Only API:** Dashboard and API bind to `127.0.0.1` only with token auth on all non-health routes.
+
+For detailed limitations, see [LIMITATIONS.md](LIMITATIONS.md).

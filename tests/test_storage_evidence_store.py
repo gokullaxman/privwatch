@@ -186,3 +186,4 @@ def test_storage_attack_path_and_policy_persistence(temp_storage):
         assert conn.execute("SELECT count(*) FROM attack_paths").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM policies").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM containment_ops").fetchone()[0] == 1
+

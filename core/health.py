@@ -181,3 +181,4 @@ class HealthRegistry:
 
 # Global default instance
 default_health_registry = HealthRegistry()
+

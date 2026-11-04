@@ -52,3 +52,25 @@ def test_csv_exporter_creates_valid_csv(temp_dir, sample_findings):
     assert len(lines) == len(sample_findings) + 1  # Header + rows
     assert "finding_id,vector,severity" in lines[0]
 
+
+def test_single_item_json_and_pdf_export(temp_dir, sample_findings):
+    finding = sample_findings[0]
+
+    # JSON export
+    json_out = str(temp_dir / "single_finding.json")
+    json_path = JSONExporter.export_item_json(finding, json_out)
+    assert os.path.exists(json_path)
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["report_metadata"]["platform"] == "UATU"
+    assert data["report_metadata"]["item_type"] == "finding"
+    assert "collection_limitations" in data["report_metadata"]
+    assert data["evidence_hash"] is not None
+
+    # PDF export
+    pdf_out = str(temp_dir / "single_finding.pdf")
+    pdf_path = PDFGenerator.generate_item_report(finding, pdf_out)
+    assert os.path.exists(pdf_path)
+    assert os.path.getsize(pdf_path) > 200
+
+

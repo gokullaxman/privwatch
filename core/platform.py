@@ -254,3 +254,4 @@ class LinuxPlatform:
 
 # Backwards compatibility class alias
 LinuxPlatformValidator = LinuxPlatform
+

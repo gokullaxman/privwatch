@@ -149,6 +149,10 @@ class SecurityEvent:
         data = asdict(self)
         data['timestamp'] = format_iso(self.timestamp)
         data['evidence_hash'] = self.evidence_hash()
+        try:
+            data['evidence'] = json.loads(json.dumps(self.evidence, default=str))
+        except Exception:
+            pass
         return data
 
     @classmethod

@@ -645,6 +645,10 @@ class StorageEngine:
                 """, records)
                 conn.commit()
 
+    def save_uatu_events(self, events: List[UatuEvent]):
+        """Alias for save_events for typed UatuEvents."""
+        self.save_events(events)
+
     def get_events(
         self,
         limit: int = 100,
@@ -760,6 +764,34 @@ class StorageEngine:
                 integrity_hash=r['integrity_hash']
             ))
         return uatu_events
+
+    def get_event_by_id(self, event_id: str) -> Optional[SecurityEvent]:
+        """Query single security event by its unique ID."""
+        with self._get_connection() as conn:
+            r = conn.execute("SELECT * FROM events WHERE event_id = ?", (event_id,)).fetchone()
+            if not r:
+                return None
+            conf = r['confidence'] if r['confidence'] is not None else 1.0
+            return SecurityEvent(
+                event_id=r['event_id'],
+                timestamp=parse_iso(r['timestamp']) or utc_now(),
+                hostname=r['hostname'] or "unknown",
+                source=r['source'] or "unknown",
+                event_type=r['event_type'] or "UNKNOWN",
+                severity=r['severity'] or Severity.INFO.value,
+                user=r['user'],
+                uid=r['uid'],
+                euid=r['euid'],
+                gid=r['gid'],
+                egid=r['egid'],
+                pid=r['pid'],
+                ppid=r['ppid'],
+                process=r['process'] or r['exe'],
+                command=r['command'],
+                evidence=json.loads(r['evidence_json']) if r['evidence_json'] else {},
+                confidence=conf,
+                is_test_fixture=bool(r['is_test_fixture'])
+            )
 
     # --- Findings ---
 
@@ -1007,6 +1039,32 @@ class StorageEngine:
                     format_iso(utc_now())
                 ))
                 conn.commit()
+
+    def get_attack_paths(self) -> List[Dict[str, Any]]:
+        """Retrieve all stored attack paths."""
+        with self._lock:
+            with self._get_connection() as conn:
+                rows = conn.execute("""
+                    SELECT path_id, start_node_id, target_node_id, node_ids_json, edge_ids_json,
+                           total_risk_score, confidence, bottleneck_node_id, recommended_disruption, created_at
+                    FROM attack_paths ORDER BY created_at DESC
+                """).fetchall()
+                paths = []
+                for r in rows:
+                    paths.append({
+                        "path_id": r[0],
+                        "start_node_id": r[1],
+                        "target_node_id": r[2],
+                        "node_ids": json.loads(r[3]) if r[3] else [],
+                        "edge_ids": json.loads(r[4]) if r[4] else [],
+                        "total_risk_score": r[5],
+                        "confidence": r[6],
+                        "bottleneck_node_id": r[7],
+                        "recommended_disruption": r[8],
+                        "created_at": r[9],
+                        "level": "CONFIGURATION_ONLY"
+                    })
+                return paths
 
     # --- Policies & Evaluations ---
 

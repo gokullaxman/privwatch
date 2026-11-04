@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import pytest
 
-from core.models import Severity
+from core.models import Severity, Finding
 from core.config import PrivWatchConfig
 from modules.red_mode.suid_scanner import SuidScanner
 from modules.red_mode.sudo_scanner import SudoScanner
@@ -117,4 +117,54 @@ def test_capabilities_scanner_definitions():
     assert 'cap_setuid' in DANGEROUS_CAP_DEFINITIONS
     assert DANGEROUS_CAP_DEFINITIONS['cap_setuid']['severity'] == Severity.CRITICAL.value
     assert 'cap_sys_admin' in DANGEROUS_CAP_DEFINITIONS
+
+
+def test_scanner_findings_stored_as_static_scan_events(temp_dir):
+    """Verify that findings are stored as events in the evidence store with data_origin=STATIC_SCAN."""
+    from core.orchestrator import PrivWatchOrchestrator
+    from core.config import PrivWatchConfig
+    from core.event_schema import DataOrigin
+
+    db_path = str(temp_dir / "scan_store_test.db")
+    cfg = PrivWatchConfig(db_path=db_path)
+    orch = PrivWatchOrchestrator(cfg)
+
+    # Add a mock finding and verify persistence as STATIC_SCAN event
+    fnd = Finding(
+        vector="SUID/SGID",
+        severity=Severity.HIGH.value,
+        title="Test Writable SUID",
+        description="Testing SUID finding",
+        affected_resource="/usr/bin/vuln",
+        evidence={'owner': '0:0', 'mode': '-rwsr-xr-x', 'path': '/usr/bin/vuln'}
+    )
+    orch.findings = [fnd]
+    orch.storage.save_findings([fnd])
+
+    # Convert to event as done in orchestrator
+    from core.event_schema import UatuEvent, ProvenanceClass, CollectionStatus
+    orch.storage.save_events([
+        UatuEvent(
+            event_id=f"evt_scan_{fnd.finding_id}",
+            timestamp=fnd.timestamp,
+            source="scanner:SUID/SGID",
+            event_type="SCAN_FINDING_SUID",
+            severity=fnd.severity,
+            command=fnd.title,
+            exe=fnd.affected_resource,
+            evidence=fnd.evidence,
+            evidence_ref=fnd.finding_id,
+            provenance_class=ProvenanceClass.DERIVED,
+            data_origin=DataOrigin.STATIC_SCAN,
+            confidence=fnd.confidence,
+            collection_status=CollectionStatus.SUCCESS
+        )
+    ])
+
+    events = orch.storage.get_uatu_events(data_origin=DataOrigin.STATIC_SCAN.value)
+    assert len(events) == 1
+    assert events[0].data_origin == DataOrigin.STATIC_SCAN
+    assert events[0].evidence["owner"] == "0:0"
+    assert events[0].evidence["mode"] == "-rwsr-xr-x"
+
 

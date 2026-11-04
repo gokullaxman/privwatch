@@ -98,3 +98,4 @@ def test_no_shell_true_or_os_system_in_codebase():
         f"Found {len(all_violations)} forbidden shell execution violations:\n"
         + "\n".join(all_violations)
     )
+

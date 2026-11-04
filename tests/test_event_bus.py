@@ -131,3 +131,4 @@ def test_event_bus_publish_sync():
 
     assert len(delivered) == 1
     assert delivered[0] is evt
+

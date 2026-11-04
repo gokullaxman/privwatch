@@ -115,3 +115,4 @@ def test_command_runner_runs_python_safely():
     assert "UATU_TEST_OK" in res.stdout_clean()
     assert res.timed_out is False
     assert res.duration_ms > 0
+

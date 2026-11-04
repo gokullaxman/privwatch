@@ -259,6 +259,10 @@ class RemediationEngine:
                     shutil.copy2(target_path, backup_file)
                     action.backup_path = backup_file
 
+                # Security check: Never permit world-writable permissions (e.g., chmod 666 / 777)
+                if action.desired_mode is not None and (action.desired_mode & 0o002):
+                    raise ValueError(f"Security rejection: Remediations must never grant world-write permissions (got mode {oct(action.desired_mode)}).")
+
                 # Execute Action via Safe POSIX System Calls
                 if action.action_type in ["CHMOD", "STRIP_SUID"] and action.desired_mode is not None:
                     os.chmod(target_path, action.desired_mode)
@@ -271,6 +275,17 @@ class RemediationEngine:
 
                 action.executed = True
                 executed_actions.append(action)
+
+            # Verification: Verify file mode and ownership match desired state on POSIX
+            if os.name == 'posix':
+                for action in executed_actions:
+                    st = os.stat(action.canonical_target)
+                    if action.desired_mode is not None:
+                        curr_mode = st.st_mode & 0o7777
+                        if action.action_type == "CHMOD":
+                            assert (curr_mode & 0o777) == (action.desired_mode & 0o777), f"Verification failed: expected mode {oct(action.desired_mode)}, got {oct(curr_mode)}"
+                        elif action.action_type == "STRIP_SUID":
+                            assert not (st.st_mode & stat.S_ISUID), f"Verification failed: SUID bit still set on {action.canonical_target}"
 
             result = {
                 'status': 'SUCCESS',
@@ -291,6 +306,8 @@ class RemediationEngine:
                 )
             return result
 
+        except ValueError as ve:
+            raise ve
         except Exception as e:
             # Operation partially failed: Trigger Safe Rollback in reverse order
             rollback_errors = []
@@ -320,3 +337,57 @@ class RemediationEngine:
                 f"Remediation execution aborted: {str(e)}. Completed actions rolled back. "
                 f"{'Errors during rollback: ' + '; '.join(rollback_errors) if rollback_errors else ''}"
             )
+
+    def rollback_plan(
+        self,
+        plan: Optional[RemediationPlan] = None,
+        actor: str = "admin",
+        finding_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Manually rollback an executed remediation plan back to its original captured state."""
+        if plan is None and finding_id:
+            if not self.storage:
+                return {'status': 'FAILED', 'success': False, 'error': 'No storage engine available'}
+            findings = self.storage.get_findings()
+            matching = [f for f in findings if f.finding_id == finding_id]
+            if not matching:
+                return {'status': 'FAILED', 'success': False, 'error': f'Finding {finding_id} not found'}
+            plan = self.generate_plan(matching[0])
+
+        if plan is None:
+            return {'status': 'FAILED', 'success': False, 'error': 'Either plan or finding_id must be provided'}
+
+        rolled_back = []
+        for action in reversed(plan.actions):
+            target_path = action.canonical_target
+            if action.expected_original_mode is not None:
+                os.chmod(target_path, action.expected_original_mode)
+            if action.expected_original_uid is not None or action.desired_gid is not None:
+                uid = action.expected_original_uid if action.expected_original_uid is not None else -1
+                gid = action.expected_original_gid if action.expected_original_gid is not None else -1
+                if hasattr(os, 'chown'):
+                    os.chown(target_path, uid, gid)
+            action.rolled_back = True
+            rolled_back.append(action.action_id)
+
+        if self.storage:
+            self.storage.log_admin_action(
+                action="REMEDIATION_MANUAL_ROLLBACK",
+                target=plan.target_resource,
+                actor=actor,
+                details={'plan_id': plan.plan_id, 'rolled_back_actions': rolled_back},
+                result="SUCCESS"
+            )
+
+        return {
+            'status': 'ROLLED_BACK',
+            'success': True,
+            'plan_id': plan.plan_id,
+            'target': plan.target_resource,
+            'rollback_commands': plan.rollback_commands,
+            'restored_mode': plan.actions[0].expected_original_mode if plan.actions else None,
+            'restored_uid': plan.actions[0].expected_original_uid if plan.actions else None,
+            'restored_gid': plan.actions[0].expected_original_gid if plan.actions else None,
+            'message': f"Successfully rolled back {len(rolled_back)} actions on {plan.target_resource}"
+        }
+

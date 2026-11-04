@@ -271,3 +271,4 @@ class UatuEvent:
         if isinstance(d.get("process_start_time"), str):
             d["process_start_time"] = parse_iso_utc(d["process_start_time"])
         return cls(**d)
+

@@ -270,3 +270,4 @@ class EventBus:
                 max_queue_size=self.max_queue_size,
                 active_subscribers=len(self._subscriptions)
             )
+
